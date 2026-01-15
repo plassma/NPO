@@ -1,0 +1,8 @@
+# Checkpoints
+Checkpoints/
+
+# WandB
+wandb/
+
+__pycache__/
+*.pyc

@@ -1,0 +1,107 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    // python argparse_ray_main.py --lrs 0.002 --GPUs 4 --n_GNN_layers 8 --temps 0.6 --IsingMode HCP_dummy --EnergyFunction HCP --N_anneal 2000 --n_diffusion_steps 3 --batch_size 20 --n_basis_states 10 --noise_potential bernoulli --project_name FirstRunsHCP --seed 123 --debug
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Generate RB_100",
+            "cwd": "DatasetCreator",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "prepare_datasets.py",
+            "args": ["--dataset", "RB_iid_100", "--problem", "MIS"],
+        },
+        {
+            "name": "Generate HCP DUMMY",
+            "cwd": "/system/user/publicwork/mplasser/NPO/DatasetCreator",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "prepare_datasets.py",
+            "args": ["--dataset", "HCP_dummy", "--problem", "HCP"],
+        },
+        {
+            "name": "DiffUCO MIS dbg",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "argparse_ray_main.py",
+            "args": ["--lrs", "0.002", "--GPUs", "3", "--n_GNN_layers", "8", "--temps", "0.6", "--IsingMode", "RB_iid_100", "--EnergyFunction", "MIS", "--N_anneal", "2000", "--n_diffusion_steps", "3", "--batch_size", "20", "--n_basis_states", "10", "--noise_potential", "annealed_obj", "--project_name", "FirstRuns", "--seed", "123", "--debug"],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "4"
+            }
+        },
+        {
+            "name": "DiffUCO HCP",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "argparse_ray_main.py",
+            "args": ["--lrs", "0.002", "--GPUs", "1", "--IsingMode", "HCP_dummy", "--EnergyFunction", "HCP", "--N_anneal", "2000", "--batch_size", "20", "--n_basis_states", "20", "--noise_potential", "annealed_obj", "--project_name", "FirstRunsHCP", "--seed", "123", "--debug", "--no-jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "2", "--minib_basis_states", "10", "--train_mode", "PPO", "--use-sample", "0", "--temps", "0.0", "--T_target", "0.0", "--AnnealSchedule", "linear"],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "4"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "DiffUCO HCP jit",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "argparse_ray_main.py",
+            "args": ["--lrs", "0.002", "--GPUs", "2,3", "--IsingMode", "HCP_dummy", "--EnergyFunction", "HCP", "--N_anneal", "2000", "--batch_size", "20", "--n_basis_states", "20", "--noise_potential", "annealed_obj", "--project_name", "FirstRunsHCP", "--seed", "123", "--debug", "--jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "2", "--minib_basis_states", "10", "--train_mode", "PPO", "--use-sample", "0", "--temps", "0.0", "--T_target", "0.0", "--AnnealSchedule", "linear"],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "4"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "DiffUCO HCP jit load only params",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "argparse_ray_main.py",
+            "args": ["--GPUs", "4", "--IsingMode", "HCP_dummy", "--EnergyFunction", "HCP", "--N_anneal", "20000", "--N_equil", "100", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--batch_size", "100", "--n_basis_states", "2000", "--minib_basis_states", "25", "--noise_potential", "annealed_obj", "--project_name", "HCP_main", "--seed", "420", "--debug", "--jit", "--train_mode", "PPO", "--use-sample", "3", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear_cyclic", "--embedding_dim", "32", "--node_transformer_layers", "1", "--load_wandb_id", "n2markht", "--load-only-params"],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "4"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "CondExp HCP",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "ConditionalExpectation.py",
+            "args": ["--wandb_id", "q4qtphuk", "--dataset", "HCP_dummy", "--GPU", "0", "--evaluation_factor", "1", "--n_samples", "10"],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "4"
+            }
+        },
+        {
+            "name": "Sample only",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "sample_from_model.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug HCP Energy",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "HCPEnergy_test.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug HCProblem",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "HCProblem_test.py",
+            "console": "integratedTerminal"
+        },
+
+    ]
+}

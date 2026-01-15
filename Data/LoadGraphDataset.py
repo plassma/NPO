@@ -1,0 +1,446 @@
+import os
+import random
+
+import jax
+from torch.utils.data import Dataset
+import pickle
+import numpy as np
+import igraph
+import jraph
+import torch
+from torch.utils.data import DataLoader
+from unipath import Path
+import os
+import jraph_utils
+from GraphWithMeta import GraphWithMeta
+
+
+class SolutionDatasetLoader:
+    def __init__(self, config = {}, dataset="MIS", problem="MIS", batch_size=32, relaxed=False, seed=123, mode = "train"):
+        self.dataset_name = dataset
+        self.problem_name = problem
+        self.batch_size = batch_size
+        self.relaxed = relaxed
+        self.seed = seed
+        self.config = config
+        self.mode = mode
+
+        default_workers = max(self.batch_size, 40)
+        if self.config.get("dataset_in_memory", True):
+            default_workers = 0
+        self.num_workers = self.config.get("dataloader_num_workers", default_workers)
+        self.prefetch_factor = self.config.get("dataloader_prefetch_factor", 2)
+        if self.num_workers > 0:
+            self.persistent_workers = self.config.get("dataloader_persistent_workers", True)
+        else:
+            self.persistent_workers = False
+
+        torch.manual_seed(self.seed)
+        self._init_mode()
+
+    def _init_mode(self):
+        if(self.mode == "train"):
+            self.train_dataset = True
+            self.val_dataset = True
+            self.test_dataset = False
+        elif(self.mode == "val"):
+            self.train_dataset = False
+            self.val_dataset = True
+            self.test_dataset = False
+        else:
+            self.train_dataset = False
+            self.val_dataset = False
+            self.test_dataset = True
+
+    def pmap_collate(self, batch):
+        #batch_transposed = list(zip(*batch))
+        batch_dict = {key: [] for key in batch[0].keys()}
+
+        for el in batch:
+            for key in batch_dict.keys():
+                batch_dict[key].append(el[key])
+
+        # jraph_graphs = [el["input_graph"] for el in batch]
+        # energy_graphs = [el["energy_graph"] for el in batch]
+        # gt_normed_energies = [el["energies"] for el in batch]
+        # gt_spin_states = [el["gs_bins"] for el in batch]
+        # U_net_graphs_dict = [el["U_net_graphs_dict"] for el in batch]
+        # #print(gt_spin_states)
+        return batch_dict
+
+    def dataloaders(self):
+
+
+        def seed_worker(worker_id):
+            worker_seed = torch.initial_seed() % 2**32
+            np.random.seed(worker_seed)
+            random.seed(worker_seed)
+
+        generator = torch.Generator()
+        generator.manual_seed(self.seed)
+
+        TRAIN_DATASET = self.train_dataset
+        TEST_DATASET = self.test_dataset
+        VAL_DATASET = self.val_dataset
+
+        dataset_train = SolutionDataset_InMemory(config = self.config, dataset=self.dataset_name, problem=self.problem_name, mode="train", relaxed=self.relaxed, seed=self.seed) if TRAIN_DATASET else None
+        dataset_test = SolutionDataset_InMemory(config = self.config, dataset=self.dataset_name, problem=self.problem_name, mode="test", relaxed=self.relaxed, seed=self.seed) if TEST_DATASET else None
+        dataset_val = SolutionDataset_InMemory(config = self.config, dataset=self.dataset_name, problem=self.problem_name, mode="val", relaxed=self.relaxed, seed=self.seed) if VAL_DATASET else None
+
+        if(self.mode == "train"):
+            mean_energy = dataset_train.val_mean_energy
+            std_energy = dataset_train.val_std_energy
+        elif(self.mode == "val"):
+            mean_energy = dataset_val.val_mean_energy
+            std_energy = dataset_val.val_std_energy
+        else:
+            mean_energy = dataset_test.val_mean_energy
+            std_energy = dataset_test.val_std_energy
+
+        collate_function = self.pmap_collate
+
+        def _loader_kwargs(**extra_kwargs):
+            loader_kwargs = dict(
+                batch_size=self.batch_size,
+                collate_fn=collate_function,
+                num_workers=self.num_workers,
+                worker_init_fn=seed_worker,
+                generator=generator
+            )
+            loader_kwargs.update(extra_kwargs)
+            if self.num_workers > 0:
+                loader_kwargs["prefetch_factor"] = self.prefetch_factor
+                loader_kwargs["persistent_workers"] = self.persistent_workers
+            return loader_kwargs
+
+        self.dataset_train = dataset_train
+        if TRAIN_DATASET:
+            train_kwargs = _loader_kwargs(drop_last=False, shuffle=True)
+            self.dataloader_train = DataLoader(self.dataset_train, **train_kwargs)
+        else:
+            self.dataloader_train = None
+
+        if TEST_DATASET:
+            test_kwargs = _loader_kwargs()
+            self.dataloader_test = DataLoader(dataset_test, **test_kwargs)
+        else:
+            self.dataloader_test = None
+
+        if VAL_DATASET:
+            val_kwargs = _loader_kwargs()
+            self.dataloader_val = DataLoader(dataset_val, **val_kwargs)
+        else:
+            self.dataloader_val = None
+        if(self.dataloader_train != None):
+            self._compute_dataset_statistics(mode = "train")
+        if(self.dataloader_val != None):
+            self._compute_dataset_statistics(mode = "val")
+        if(self.dataloader_test != None):
+            self._compute_dataset_statistics(mode = "test")
+        return self.dataloader_train, self.dataloader_test, self.dataloader_val, (mean_energy, std_energy)
+
+    def _compute_dataset_statistics(self, mode = "train"):
+
+        if(mode == "train"):
+            current_dataloader = self.dataloader_train
+        elif(mode == "val"):
+            current_dataloader = self.dataloader_val
+        else:
+            current_dataloader = self.dataloader_test
+
+        statistics_dict = {}
+        statistics_dict["input_graph"] = {"n_edges": [], "n_nodes": []}
+        statistics_dict["energy_graph"] = {"n_edges": [], "n_nodes": []}
+
+        for batch_dict in current_dataloader:
+            input_graph = batch_dict["input_graph"]
+            energy_graph = batch_dict["energy_graph"]
+            energy_graph_nodes = [int(el.graph.n_node[0]) for el in energy_graph]
+            input_graph_nodes = [int(el.graph.n_node[0]) for el in input_graph]
+            energy_graph_edges = [int(el.graph.n_edge[0]) for el in energy_graph]
+            input_graph_edges = [int(el.graph.n_edge[0]) for el in input_graph]
+
+            statistics_dict["input_graph"]["n_edges"].extend(input_graph_edges)
+            statistics_dict["energy_graph"]["n_edges"].extend(energy_graph_edges)
+            statistics_dict["input_graph"]["n_nodes"].extend(input_graph_nodes)
+            statistics_dict["energy_graph"]["n_nodes"].extend(energy_graph_nodes)
+
+        current_dataloader.smallest_n_edges_input_graph, current_dataloader.largest_n_edges_input_graph = get_x_smallest_and_largest(statistics_dict["input_graph"]["n_edges"], self.batch_size)
+        current_dataloader.smallest_n_edges_energy_graph, current_dataloader.largest_n_edges_energy_graph = get_x_smallest_and_largest(statistics_dict["energy_graph"]["n_edges"], self.batch_size)
+        current_dataloader.smallest_n_nodes_input_graph, current_dataloader.largest_n_nodes_input_graph = get_x_smallest_and_largest(statistics_dict["input_graph"]["n_nodes"], self.batch_size)
+        current_dataloader.smallest_n_nodes_energy_graph, current_dataloader.largest_n_nodes_energy_graph = get_x_smallest_and_largest(statistics_dict["energy_graph"]["n_nodes"], self.batch_size)
+        print("dataset statistics",mode, current_dataloader.smallest_n_edges_input_graph, current_dataloader.largest_n_edges_input_graph)
+
+
+
+
+    def reinint_train_dataloader(self, epoch):
+
+        def seed_worker(worker_id):
+            worker_seed = (torch.initial_seed() + epoch) % 2**32
+            np.random.seed(worker_seed)
+            random.seed(worker_seed)
+
+        generator = torch.Generator()
+        generator.manual_seed(self.seed+ epoch)
+
+        loader_kwargs = dict(
+            batch_size=self.batch_size,
+            collate_fn=self.pmap_collate,
+            num_workers=self.num_workers,
+            shuffle=True,
+            worker_init_fn=seed_worker,
+            generator=generator
+        )
+        if self.num_workers > 0:
+            loader_kwargs["prefetch_factor"] = self.prefetch_factor
+            loader_kwargs["persistent_workers"] = self.persistent_workers
+
+        dataloader_train = DataLoader(self.dataset_train, **loader_kwargs)
+        return dataloader_train
+
+
+def return_jraph(i_graph: igraph.Graph):
+    """
+    Return current igraph as jraph
+    The nodes are the external fields and the edges are the couplings
+    """
+    edges = np.array(i_graph.get_edgelist())
+    n_edges = i_graph.ecount()
+    if n_edges > 0:
+        couplings = np.array(i_graph.es['couplings'])
+
+        jraph_senders = edges[:, 0]
+        jraph_receivers = edges[:, 1]
+
+        external_fields = np.array(i_graph.vs['ext_fields'])
+        jraph_graph = jraph.GraphsTuple(nodes=external_fields,
+                                        edges=couplings,
+                                        senders=jraph_senders,
+                                        receivers=jraph_receivers,
+                                        n_node=np.array([i_graph.vcount()]),
+                                        n_edge=np.array([jraph_receivers.shape[0]]),
+                                        globals=None)
+    else:
+        raise NotImplementedError("graph has no edges")
+    #print("jraph", jraph_graph)
+    return jraph_graph
+
+class SolutionDataset(Dataset):
+    def __init__(self, config = {}, dataset="ENZYMES", problem="MIS", mode="val", relaxed=False, seed=123):
+        self.dataset_name = dataset
+        self.problem_name = problem
+        self.mode = mode
+        self.seed = seed
+        self.relaxed = relaxed
+
+        print("here")
+        print(os.path.exist("/mnt/proj2/dd-23-97/"))
+        
+        base_path = os.path.dirname(os.getcwd()) + "/DIffUCO/DatasetCreator/loadGraphDatasets/DatasetSolutions/"
+
+        if self.relaxed:
+            self.path = base_path + "no_norm/"
+
+            self.graphs_dict, self.metrics = self.__load_dataset()
+
+        else:
+            self.path = base_path + "normed_H_graph_sparse/"
+
+            self.graphs_dict, self.metrics = self.__create_jraph_dataset()
+
+    def __len__(self):
+        return len(self.normed_energies)
+
+    def __getitem__(self, item):
+        gt_normed_energy = np.array(self.metrics["Energies"][item])
+        gt_spin_state = np.array(self.metrics["gs_bins"][item]) * 2 - 1
+
+        #print(item, len(self.graphs_dict["input_graphs"]), len(self.graphs_dict["energy_graphs"]))
+        return self.graphs_dict["input_graphs"][item], self.graphs_dict["energy_graphs"][item], gt_normed_energy, gt_spin_state
+
+    def __load_dataset(self):
+        if(self.problem_name == "MaxClv2"):
+            select_data_name =  "MaxCl"
+        else:
+            select_data_name =  self.problem_name
+        base_path = os.path.join(self.path, self.dataset_name)
+        path = os.path.join(base_path, f"{self.mode}_{select_data_name}_seed_{self.seed}_solutions.pickle")
+        with open(path, 'rb') as file:
+            solution_dict = pickle.load(file)
+
+        if(self.problem_name == "MaxCl" or self.problem_name == "TSP" or self.problem_name == "MIS" or self.problem_name == "MaxClv2"):
+            energy_graphs = solution_dict["compl_H_graphs"]
+        else:
+            energy_graphs = solution_dict["H_graphs"]
+
+
+        U_net_graph_dict = solution_dict["U_net_graph_dict"]
+        Energies = solution_dict["Energies"]
+        gs_bins = solution_dict["gs_bins"]
+        input_graphs = solution_dict["H_graphs"]
+
+        self.normed_energies = Energies
+        self.gs_bin_states = gs_bins
+        if self.relaxed:
+            self.val_mean_energy = 0
+            self.val_std_energy = 1
+            metrics_dict = {"Energies": Energies, "gs_bins": gs_bins, "mean_energy": self.val_mean_energy,
+                                       "std_energy": self.val_std_energy}
+            return {"input_graphs": input_graphs, "energy_graphs": energy_graphs}, metrics_dict
+        else:
+            self.val_mean_energy = solution_dict["val_mean_Energy"]
+            self.val_std_energy = solution_dict["val_std_Energy"]
+            return_dict = {"input_graphs": input_graphs, "energy_graphs": energy_graphs, "U_net_graph_dict": U_net_graph_dict,
+                           "metrics": {"Energies": Energies, "gs_bins": gs_bins, "mean_energy": self.val_mean_energy,
+                                       "std_energy": self.val_std_energy}}
+            return return_dict
+
+    def __create_jraph_dataset(self):
+        if self.relaxed:
+            raise ValueError('__create_jraph_dataset should not be called when using relaxed states as the dataset used is not normed!')
+        return_dict = self.__load_dataset()
+
+        graph_dict = {"input_graphs": [], "energy_graphs": []}
+        for input_i_graph, energy_i_graph in zip(return_dict["input_graph"], return_dict["energy_graph"]):
+            graph_dict["input_graphs"].append(return_jraph(input_i_graph))
+            graph_dict["energy_graphs"].append(return_jraph(energy_i_graph))
+
+
+        return graph_dict, return_dict["metrics"]
+
+
+class SolutionDataset_InMemory(Dataset):
+    def __init__(self, config = {}, dataset="ENZYMES", problem="MIS", mode="val", relaxed=False, seed=123):  ### TODO add orderign to config
+        self.config = config
+        self.dataset_name = dataset
+        self.problem_name = problem
+        self.mode = mode
+        self.seed = seed
+        self.relaxed = relaxed
+
+        self.n_diffusion_steps = self.config["n_diffusion_steps"]+ 1
+        self.buffer_size = 1000
+        self.N_basis_states = self.config["N_basis_states"]
+
+        self.get_dataset_paths(config, mode=mode, seed=seed)
+        self._init_MCMCBuffer()
+        # Initialize cache for loaded data
+        self._data_cache = {}
+        # Optional: limit cache size to prevent memory issues
+        self._max_cache_size = getattr(config, 'max_cache_size', 1000)
+        #super().__init__(self.base_path, None, None, None)
+        for i in range(len(self)): # init cache
+            self.__getitem__(i)
+
+    def _init_MCMCBuffer(self):
+        self.MCMCBuffer = [None for i in range(self.__len__())]
+
+    def _get__MCMCBuffer_item(self, graph, idx):
+        ### TODO randomly select indices from buffer
+        rand_idxs = np.random.choice(self.buffer_size, self.N_basis_states)
+        if isinstance(self.MCMCBuffer[idx], np.ndarray):
+            X_sequence = self.MCMCBuffer[idx][:,:,rand_idxs]
+        else:
+            init_X_sequence = np.zeros((graph.nodes.shape[0], self.n_diffusion_steps, self.buffer_size, 1))
+            self.MCMCBuffer[idx] = init_X_sequence
+            X_sequence = init_X_sequence[:,:,rand_idxs]
+
+        return X_sequence, rand_idxs
+
+    def update_MCMC_buffer(self, updated_X_sequence, idx, rand_idxs):
+        if isinstance(self.MCMCBuffer[idx], np.ndarray):
+            self.MCMCBuffer[idx][:, :, rand_idxs] = updated_X_sequence
+        else:
+            init_X_sequence = np.zeros((updated_X_sequence.shape[0], self.n_diffusion_steps, self.buffer_size, 1))
+            self.MCMCBuffer[idx] = init_X_sequence
+            self.MCMCBuffer[idx][:, :, rand_idxs] = updated_X_sequence
+
+        return True
+
+    def get_dataset_paths(self, cfg, mode="", seed=None):
+        if(self.problem_name == "MaxClv2"):
+            select_data_name =  "MaxCl"
+        else:
+            select_data_name =  self.problem_name
+
+        base_path = os.path.dirname(os.getcwd()) + "/DIffUCO/DatasetCreator/loadGraphDatasets/DatasetSolutions/"
+
+        load_path = base_path + f"no_norm/{self.dataset_name}/{self.mode}/{self.seed}/{select_data_name}/indexed/"
+        with open(load_path+ f"idx_{0}_solutions.pickle", "rb") as file:
+            pickle.load(file)
+        self.base_path = load_path
+
+        self.val_mean_energy = 0.
+        self.val_std_energy = 1.
+
+        _, _, files = next(os.walk(load_path))
+        file_count = len(files)
+        self.n_graphs = 1 # file_count
+
+    def __len__(self):
+        return self.n_graphs
+
+    def __getitem__(self, idx):
+        idx += self.config["use_sample"]
+        # Check if data is already cached
+        if idx in self._data_cache:
+            return self._data_cache[idx]
+
+        # Load data from disk
+        with open(self.base_path + f"idx_{idx}_solutions.pickle", "rb") as file:
+            print("loading graph from HDD")
+            graph_dict = pickle.load(file)
+
+        input_graph = graph_dict["H_graphs"]
+
+        if("U_net_graph_dict" in graph_dict.keys()):
+            U_net_graph_dict = graph_dict["U_net_graph_dict"]
+        else:
+            U_net_graph_dict = None
+
+        if("compl_H_graphs" in graph_dict.keys()):
+            if( graph_dict["compl_H_graphs"] != None):
+                energy_graphs = graph_dict["compl_H_graphs"]
+            elif(type(graph_dict["compl_H_graphs"]) == list):
+                if(len(graph_dict["compl_H_graphs"]) > 0):
+                    energy_graphs = graph_dict["compl_H_graphs"]
+            else:
+                energy_graphs = input_graph
+        else:
+            if(self.problem_name == "MaxCl" or self.problem_name == "TSP" or self.problem_name == "MIS" or self.problem_name == "MaxClv2"):
+                print(graph_dict.keys())
+                raise ValueError("that is not possible")
+            energy_graphs = input_graph
+
+        # print("compare edges of input graph and energy graph", energy_graphs.edges.shape, input_graph.edges.shape)
+        # print("compare edges of input graph and energy graph", energy_graphs.edges, input_graph.edges.shape)
+        input_graph = GraphWithMeta(graph=input_graph.graph._replace(edges = input_graph.graph.edges.astype(np.float32)), meta=input_graph.meta)
+        energy_graphs = input_graph#energy_graphs._replace(edges = energy_graphs.edges.astype(np.float32))
+
+        return_dict = {"input_graph": input_graph, "energy_graph": energy_graphs, "energies": graph_dict["Energies"],
+                       "U_net_graph_dict": U_net_graph_dict, "bs_bins": graph_dict["gs_bins"]}
+        
+        # Cache the result
+        self._data_cache[idx] = return_dict
+        
+        # Optional: limit cache size (simple LRU-like behavior)
+        if len(self._data_cache) > self._max_cache_size:
+            # Remove the oldest entry (first key)
+            oldest_key = next(iter(self._data_cache))
+            del self._data_cache[oldest_key]
+            
+        return return_dict
+
+
+def get_x_smallest_and_largest(lst, x):
+
+    sorted_lst = sorted(lst)
+
+    # Get the X smallest values
+    x_smallest = sorted_lst[:x]
+
+    # Get the X largest values
+    x_largest = sorted_lst[-x:]
+
+    return sum(x_smallest), sum(x_largest)
