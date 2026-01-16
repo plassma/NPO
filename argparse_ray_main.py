@@ -12,7 +12,7 @@ parser.add_argument('--EnergyFunction', default='MIS', choices = ["HCP", "MaxCut
 parser.add_argument('--IsingMode', default='RB_iid_100', choices = ["HCP_dummy", "Gset","BA_large","RB_iid_small", "RB_iid_dummy", "BA_dummy", "RB_iid_large" ,"RRG_200_k_=all", "BA_small","TSP_random_100", 
                                                                     "TSP_random_20", "COLLAB", "IMDB-BINARY", "RB_iid_100_dummy" , "RB_iid_200", "RB_iid_100", "NxNLattice_4x4", "NxNLattice_8x8", "NxNLattice_16x16", "NxNLattice_10x10", "SpinGlassUniform_10x10", "SpinGlass_16x16", "NxNLattice_24x24", "NxNLattice_32x32"], help='Define the Training dataset')
 parser.add_argument('--graph_mode', default='normal', choices = ["normal", "TSPModel", "Transformer", "UNet"], help='Use U-Net or normal GNN, TSP model is a graph based implementation of the transformer, transformer is to be prefered')
-parser.add_argument('--train_mode', default='REINFORCE', choices = ["REINFORCE", "PPO", "Forward_KL"], help='Use U-Net or normal GNN')
+parser.add_argument('--train_mode', default='REINFORCE', choices = ["REINFORCE", "PPO", "GRPO", "Forward_KL"], help='Use U-Net or normal GNN')
 parser.add_argument('--AnnealSchedule', default='linear', choices = ["linear", "cosine", "exp", "linear_cyclic", "piecewise_linear"], help='Define the Annealing Schedule')
 parser.add_argument('--temps', default=[0.], type = float, help='Define gridsearch over Temperature', nargs = "+")
 parser.add_argument('--T_target', default=0., type = float, help='Define target temperature')
@@ -41,9 +41,9 @@ parser.add_argument('--noise_potential', default = ["annealed_obj"], type = str,
 parser.add_argument('--n_basis_states', default=[10], type = int, help='number of states per graph', nargs = "+")
 parser.add_argument('--n_test_basis_states', default=8, type = int, help='number of states per graph during test time')
 parser.add_argument('--batch_size', default=[30], type = int, help='number of graphs within a batch', nargs = "+")
-parser.add_argument('--minib_diff_steps', default=1, type = int, help='minibatch size in diffusion steps in PPO or forward KL')
-parser.add_argument('--minib_basis_states', default=10, type = int, help='minibatch size in basis states in PPO or forward KL')
-parser.add_argument('--inner_loop_steps', default=1, type = int, help='number of inner loop steps in PPO or forward KL')
+parser.add_argument('--minib_diff_steps', default=1, type = int, help='minibatch size in diffusion steps in PPO/GRPO or forward KL')
+parser.add_argument('--minib_basis_states', default=10, type = int, help='minibatch size in basis states in PPO/GRPO or forward KL')
+parser.add_argument('--inner_loop_steps', default=1, type = int, help='number of inner loop steps in PPO/GRPO or forward KL')
 parser.add_argument('--n_GNN_layers', default=[8], type = int, help='num of GNN Layers', nargs = "+")
 parser.add_argument('--project_name', default= "", type = str, help='define project name')
 parser.add_argument('--beta_factor', default=[1.], type = float, help='desfine noise strength', nargs = "+")
@@ -51,7 +51,7 @@ parser.add_argument('--loss_alpha', default=0.0, type = float, help='rel weighte
 parser.add_argument('--MCMC_steps', default=0, type = int, help='number of MCMC steps')
 parser.add_argument('--mov_average', default=0.0009, type = float, help='moving_average for RL')
 parser.add_argument('--TD_k', default=3, type = float, help='TD_k for PPO')
-parser.add_argument('--clip_value', default=0.2, type = float, help='clip_value for PPO')
+parser.add_argument('--clip_value', default=0.2, type = float, help='clip_value for PPO/GRPO')
 parser.add_argument('--value_weighting', default=0.65, type = float, help='value_func weighting for PPO')
 parser.add_argument('--mem_frac', default= ".90", type = str, help='memory fraction')
 parser.add_argument('--diff_schedule', default= "own", type = str, help='define diffusion schedule')
@@ -102,8 +102,8 @@ args = parser.parse_args()
 ### TODO rerun checkpoint from best checkpoint
 def meanfield_run():
 
-    if(args.EnergyFunction == "TSP" and args.train_mode != "PPO"):
-        raise ValueError("TSP is only implemented for PPO")
+    if(args.EnergyFunction == "TSP" and args.train_mode not in ["PPO", "GRPO"]):
+        raise ValueError("TSP is only implemented for PPO/GRPO")
 
     resources_per_trial = 1.
     devices = args.GPUs
@@ -330,7 +330,7 @@ def run( flexible_config, overwrite = True):
         "noise_potential": "annealed_obj",
 
         "time_conditioning": True,
-        "piecewise_linear_anneal_schedule": [(0, 0.001), (600, 0.005), (1000, 0.01)],
+        "piecewise_linear_anneal_schedule": [(0, 0.001), (2500, 0.004), (1200, 0.0075)],
         "project_name": args.project_name,
         "mean_aggr": False,
         "grad_clip": True,

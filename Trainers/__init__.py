@@ -1,9 +1,10 @@
 from .REINFORCE_Trainer import Reinforce
 from .PPO_Trainer import PPO
+from .GRPO_Trainer import GRPO
 from.ForwardKL_Trainer import ForwardKL
 
 ### TODO implement mixture of AnnealedNoise and Bernoulli Noise
-Trainer_registry = {"REINFORCE": Reinforce, "PPO": PPO, "Forward_KL": ForwardKL}
+Trainer_registry = {"REINFORCE": Reinforce, "PPO": PPO, "GRPO": GRPO, "Forward_KL": ForwardKL}
 
 
 

@@ -401,7 +401,7 @@ class TrainMeanField:
 					loaded_dict = {"params": params, "config": config, "epoch": epochs}
 
 			else:
-				if(self.config["train_mode"] == "PPO" and self.config["problem_name"] != "IsingModel"):
+				if(self.config["train_mode"] in ["PPO", "GRPO"] and self.config["problem_name"] != "IsingModel"):
 					try:
 						loaded_dict = self._load_best_epoch()
 					except:
