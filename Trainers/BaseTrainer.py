@@ -113,18 +113,7 @@ class Base(ABC):
 
         self.vmapped_relaxed_energy = vmapped_relaxed_energy
 
-        self.energy_CE = EnergyClass.calculate_Energy_CE
-        self.vmapped_energy_CE = jax.vmap(self.energy_CE, in_axes=(None, 1, None), out_axes=(1))
-
-        self.calculate_Energy_CE_p_values = EnergyClass.calculate_Energy_CE_p_values
-        self.vmapped_calculate_Energy_CE_p_values = jax.vmap(self.calculate_Energy_CE_p_values, in_axes=(None,1), out_axes=(1))
-
-        self.energy_feasible = EnergyClass.calculate_Energy_feasible
-        self.vmapped_energy_feasible = jax.vmap(self.energy_feasible, in_axes=(None, 1), out_axes=(1, 0, 1))
-
         self.vmapped_relaxed_energy_for_Loss = vmapped_relaxed_energy_for_Loss
-
-        self.pmap_apply_CE_on_p = jax.pmap(self.apply_CE_on_p, in_axes=(0, 0))
 
         self.n_diffusion_steps = self.config["n_diffusion_steps"]
         self.N_basis_states = self.config["N_basis_states"]
@@ -217,107 +206,9 @@ class Base(ABC):
         log_dict["time"] = {}
         log_dict["time"]["forward_pass"] = end_forw_pass_time - start_forw_pass_time
 
-        if(mode == "test"):
-            # print("testing eval step factor is", self.eval_step_factor)
-            if(self.config["problem_name"] != "TSP"):
-                p_0 = jnp.exp(log_dict["log_p_0"][...,1])
-                start_CE_time = time.time()
-                X_0_CE, energies_CE, Hb_per_node = self.pmap_apply_CE_on_p(energy_graph_batch, p_0)
-                end_CE_time = time.time()
-                ####remove padded energies
-                last_node_idx = jnp.sum(energy_graph_batch.n_node[0, 0:-1])
-                log_dict["metrics"]["X_0_CE"], log_dict["metrics"]["energies_CE"] = X_0_CE[:, :last_node_idx, ...], energies_CE[:,:-1]
-                log_dict["time"]["CE"] = end_CE_time - start_CE_time
-            else:
-                log_dict["metrics"]["X_0_CE"] = log_dict["metrics"]["X_0"]
-                log_dict["metrics"]["energies_CE"] =  log_dict["metrics"]["energies"]
-                log_dict["time"]["CE"] = 0.
-        else:
-            log_dict["time"]["CE"] = 0.
+        
+        log_dict["time"]["CE"] = 0. # can deleted?
 
-
-        if (self.config["problem_name"] in self.unbiased_list  and epoch % int(epochs/50) == 0 and self.n_sampling_rounds > 0):
-            jax.config.update("jax_enable_x64", True)
-            if key is None:
-                key = jax.random.PRNGKey(0)
-
-            if n_sampling_rounds is None:
-                n_sampling_rounds = self.n_sampling_rounds
-            if sampling_temp is not None:
-                self.sampling_temp = sampling_temp
-
-            self.sampling_mode = sampling_mode
-
-            energies = []
-            log_p = []
-            log_q = []
-            for i in tqdm(range(n_sampling_rounds)):
-                subkey = jax.random.fold_in(key, i)
-                batched_key = jax.random.split(subkey, num=len(jax.devices()))
-
-                result_dict = self.pmap_sample_for_estimate(params, graph_batch, energy_graph_batch, self.T_target, self.sampling_temp, batched_key)
-
-                energies.append(result_dict["energies"])
-                log_p.append(result_dict["log_p"])
-                log_q.append(result_dict["log_q"])
-
-            log_p = jnp.concatenate(log_p, axis=-1)
-            log_q = jnp.concatenate(log_q, axis=-1)
-            energies = jnp.concatenate(energies, axis=-1)
-
-            esimate_dict = self.unbiased_estimates(log_p, log_q, energies)
-
-            X_0 = result_dict["X_0"]
-            X_sequences = result_dict["X_sequences"]
-            log_dict["energies"]["unbiased_free_energy"] = esimate_dict["free_energies"][-1]
-            log_dict["energies"]["unbiased_internal_energy"] = esimate_dict["internal_energies"][-1]
-            log_dict["energies"]["unbiased_entropy"] = esimate_dict["entropies"][-1]
-            # log_dict["energies"]["energies_sampled"] = esimate_dict["free_energies"]
-            # log_dict["energies"]["n_states"] = esimate_dict["n_states"]
-            log_dict["energies"]["gt_unbiased_free_energy"] = self.free_energy
-            log_dict["energies"]["gt_unbiased_internal_energy"] = self.internal_energy
-            log_dict["energies"]["absolute_error_free_energy"] = np.abs(self.free_energy - esimate_dict["free_energies"][-1])
-            log_dict["energies"]["absolute_error_internal_energy"] = np.abs(self.internal_energy - esimate_dict["internal_energies"][-1])
-            ### TODO add new key matrices?
-            log_dict["energies"]["log_p"] = log_p
-            log_dict["energies"]["log_q"] = log_q
-            N = self.size * self.size
-
-            States = []
-            for i in range(4):
-                state = X_0[0, :N, i, 0]
-                state = jnp.reshape(state, (self.size, self.size))
-                States.append(state)
-
-            Magnetization_dict = self._calculate_Magnetisations(X_0)
-
-            for mag_key in Magnetization_dict:
-                log_dict["energies"][mag_key] = Magnetization_dict[mag_key]
-
-            log_dict["figures"]["Ising_states"] = {"X_0": States, "type": "Ising", "X_sequences": X_sequences}
-            log_dict["figures"]["free_energies"] = {"type": "Ising", "y_axis": esimate_dict["free_energies"], "x_axis": esimate_dict["n_states"] , "baseline": self.free_energy}
-            log_dict["figures"]["internal_energies"] = {"type": "Ising", "y_axis": esimate_dict["internal_energies"], "x_axis": esimate_dict["n_states"],  "baseline": self.internal_energy}
-            log_dict["figures"]["entropies"] = {"type": "Ising", "y_axis": esimate_dict["entropies"], "x_axis": esimate_dict["n_states"],  "baseline": self.entropy}
-            log_dict["figures"]["eff_sample_size"] = {"type": "Ising", "y_axis": esimate_dict["effective_sample_size"], "x_axis": esimate_dict["n_states"]}
-
-            free_energy_err = np.abs(self.free_energy - np.array(esimate_dict["free_energies"]))
-            internal_energy_err = np.abs(self.internal_energy - np.array(esimate_dict["internal_energies"]))
-            log_dict["figures"]["free_energies_err"] = {"type": "Ising", "y_axis": free_energy_err, "x_axis": esimate_dict["n_states"]}
-            log_dict["figures"]["internal_energies_err"] = {"type": "Ising", "y_axis": internal_energy_err, "x_axis": esimate_dict["n_states"]}
-
-            self.n_sampling_rounds = n_sampling_rounds
-            print("Start MCMC")
-            MCMC_dict = self.sample_MCMC(params, graph_batch, energy_graph_batch, self.sampling_temp, key)
-            log_dict["samples"] = {}
-            log_dict["samples"]["unbiased_X_sequences"] = MCMC_dict["unbiased_X_sequences"]
-            log_dict["samples"]["biased_X_sequences"] = MCMC_dict["biased_X_sequences"]
-            unbiased_internal_energy_MCMC = self._calculate_Ising_energy(MCMC_dict["energies_list"][-1])
-            print("MCMC interneal energy", unbiased_internal_energy_MCMC)
-            log_dict["energies"]["unbiased_internal_energy_MCMC"] = unbiased_internal_energy_MCMC
-
-            log_dict["figures"]["internal_energies_MCMC"] = {"type": "Ising", "y_axis": [self._calculate_Ising_energy(el) for el in MCMC_dict["energies_list"]], "x_axis": np.arange(0, self.n_sampling_rounds + 1),  "baseline": self.internal_energy}
-
-            jax.config.update("jax_enable_x64", False)
         return loss, (log_dict, _)
 
     def _calculate_Ising_energy(self, Energies):
@@ -809,12 +700,6 @@ class Base(ABC):
         total_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
         node_graph_idx = jnp.repeat(graph_idx, n_node, axis=0, total_repeat_length=total_nodes)
         return node_graph_idx, n_graph, n_node
-
-    @partial(jax.jit, static_argnums=(0,))
-    def apply_CE_on_p(self, energy_graph_batch, p_0):
-        X_0_CE, energies_CE, Hb_per_node = self.vmapped_calculate_Energy_CE_p_values(energy_graph_batch, p_0)
-
-        return X_0_CE, energies_CE, Hb_per_node
 
     # @abstractmethod
     # def sample(self):

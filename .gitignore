@@ -4,5 +4,9 @@ Checkpoints/
 # WandB
 wandb/
 
+htmlcov/
+
+.coverage
+
 __pycache__/
 *.pyc

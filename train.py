@@ -15,7 +15,6 @@ from DatasetCreator.loadGraphDatasets.HCPDatasetGenerator import plot
 from NoiseDistributions import get_Noise_class
 from Trainers import get_Trainer_class
 from Networks.DiffModel import DiffModel
-from jraph_utils import pmap_batch_U_net_graph_dict_and_pad
 from utils.lr_schedule import cos_schedule
 from EnergyFunctions import get_Energy_class
 from Data.LoadGraphDataset import SolutionDatasetLoader
@@ -32,6 +31,7 @@ import warnings
 class TrainMeanField:
 	def __init__(self, config, load_wandb_id = None, eval_step_factor = 1, load_best_parameters = False):
 		self.load_wandb_id = load_wandb_id
+		self.load_step = config["load_step"]
 		self.load_best_parameters = load_best_parameters
 		jax.config.update('jax_disable_jit', not config["jit"])
 
@@ -47,7 +47,7 @@ class TrainMeanField:
 		self.key = jax.random.PRNGKey(self.seed)
 
 		# if epoch % save_modulo == 0 the params will be saved
-		self.save_modulo = 50
+		self.save_modulo = 100
 
 		self.dataset_name = self.config["dataset_name"]
 		self.problem_name = self.config["problem_name"]
@@ -308,41 +308,41 @@ class TrainMeanField:
 		self.NoiseDistrClass = get_Noise_class(self.config)
 
 
-	def _load_last_epoch(self):
+	def _load_checkpoint_file(self, file_name):
+		path_folder = f"{self.path_to_models}/{self.load_wandb_id}/"
+		with open(os.path.join(path_folder, file_name), "rb") as f:
+			return pickle.load(f)
+
+	def _load_checkpoint(self, kind):
 		wandb_run_id = self.load_wandb_id
-		path_folder = f"{self.path_to_models}/{wandb_run_id}/"
-		file_name = f"{wandb_run_id}_last_epoch.pickle"
-		with open(path_folder + file_name, "rb") as f:
-			loaded_dict = pickle.load(f)
-		return loaded_dict
+		if kind == "last":
+			file_name = f"{wandb_run_id}_last_epoch.pickle"
+		elif kind == "best":
+			file_name = f"best_{wandb_run_id}.pickle"
+		elif kind == "step":
+			file_name = f"{wandb_run_id}_{self.load_step}.pickle"
+		else:
+			raise ValueError(f"Unknown checkpoint kind: {kind}")
 
-	def _load_best_epoch(self):
-		wandb_run_id = self.load_wandb_id
-		path_folder = f"{self.path_to_models}/{wandb_run_id}/"
-		#file_name = f"{wandb_run_id}_best_epoch_new.pickle"
-		file_name = f"best_{wandb_run_id}.pickle"
-		with open(path_folder + file_name, "rb") as f:
-			loaded_dict = pickle.load(f)
+		loaded = self._load_checkpoint_file(file_name)
+		if isinstance(loaded, dict):
+			return loaded
 
-		return loaded_dict
-
-	def _load_best_epoch_old(self):
-		wandb_run_id = self.load_wandb_id
-		path_folder = f"{self.path_to_models}/{wandb_run_id}/"
-		file_name = f"best_{wandb_run_id}.pickle"
-
-		with open(os.path.join(path_folder, file_name), 'rb') as f:
-			loaded_tuple = pickle.load( f)
-
-		params = loaded_tuple[0]
-		config = loaded_tuple[1] if not self.config["load_only_params"] else self.config
-		return params, config
+		params = loaded[0]
+		config = loaded[1] if not self.config["load_only_params"] else self.config
+		epoch = None
+		if kind != "last":
+			try:
+				epoch = self._load_checkpoint("last")["epoch"]
+			except Exception:
+				epoch = 0
+		return {"params": params, "config": config, "epoch": epoch}
 
 	def _init_config(self, config):
 		if(self.load_wandb_id == None or config["load_only_params"]):
 			return config
 		else:
-			loaded_dict = self._load_last_epoch()
+			loaded_dict = self._load_checkpoint("last")
 			loaded_config = loaded_dict["config"]
 			loaded_config["N_anneal"] = max(config["N_anneal"], loaded_config.get("N_anneal", 0))
 			return loaded_config
@@ -392,24 +392,19 @@ class TrainMeanField:
 		else:
 			if(self.load_best_parameters):
 				print("Best Parameters are Loaded!")
-				loaded_dict = self._load_best_epoch()
-				if(isinstance(loaded_dict, dict)):
-					pass
-				else:
-					params, config = self._load_best_epoch_old()
-					epochs = self._load_last_epoch()["epoch"]
-					loaded_dict = {"params": params, "config": config, "epoch": epochs}
-
+				loaded_dict = self._load_checkpoint("best")
+			elif self.config["load_step"] > 0:
+				loaded_dict = self._load_checkpoint("step")
 			else:
 				if(self.config["train_mode"] in ["PPO", "GRPO"] and self.config["problem_name"] != "IsingModel"):
 					try:
-						loaded_dict = self._load_best_epoch()
-					except:
-						loaded_dict = self._load_last_epoch()
-
+						loaded_dict = self._load_checkpoint("best")
+					except Exception:
+						loaded_dict = self._load_checkpoint("last")
 				else:
-					loaded_dict = self._load_last_epoch()
+					loaded_dict = self._load_checkpoint("last")
 
+			self.loaded_checkpoint = loaded_dict
 			print("loaded dict", self.load_best_parameters, loaded_dict.keys())
 			self.curr_epoch = loaded_dict["epoch"] if not self.config["load_only_params"] else 0
 			self.params = loaded_dict["params"]
@@ -456,8 +451,11 @@ class TrainMeanField:
 			self.opt_state = jax.pmap(opt_init)(params)
 
 		else:
-			loaded_dict = self._load_last_epoch()
-			self.opt_state = loaded_dict["opt_state"]
+			loaded_dict = getattr(self, "loaded_checkpoint", None) or self._load_checkpoint("last")
+			opt_state = loaded_dict.get("opt_state")
+			if opt_state is None:
+				opt_state = self._load_checkpoint("last")["opt_state"]
+			self.opt_state = opt_state
 			self.opt_state = jax.tree_util.tree_map(lambda x: x[0], self.opt_state)
 			self.opt_state = jax.device_put_replicated(self.opt_state, list(jax.devices()))
 
@@ -654,7 +652,7 @@ class TrainMeanField:
 		self.save_metrics_dict["eval/energy"] = []
 		self.save_metrics_dict["eval/gt_energy"] = []
 		self.save_metrics_dict["eval/rel_error"] = []
-		self.__save_params_every_epoch(0)
+		self.__save_checkpoint(f"{self.wandb_run_id}_last_epoch.pickle", epoch=0)
 		self.eval(epoch=0)
 		print("start training...")
 		epoch_range = np.arange(self.curr_epoch, self.epochs)
@@ -899,14 +897,16 @@ class TrainMeanField:
 			self.epochs_since_best += 1
 
 		if average_energy < self.best_energy:
-			self.__save_params(best_run=True, eval_dict=eval_log_dict)
-			self.__save_best_params(epoch = epoch, eval_dict=eval_log_dict)
+			self.__save_checkpoint(f"best_{self.wandb_run_id}.pickle", epoch=epoch, eval_dict=eval_log_dict)
 			self.best_energy = average_energy
 			self.epochs_since_best = 0
 		else:
 			self.epochs_since_best += 1
 
-		self.__save_params_every_epoch(epoch)
+		if epoch > 0 and epoch % self.save_modulo == 0:
+			self.__save_checkpoint(f"{self.wandb_run_id}_{epoch}.pickle", epoch=epoch)
+
+		self.__save_checkpoint(f"{self.wandb_run_id}_last_epoch.pickle", epoch=epoch)
 
 		wandb.log(eval_log_dict, step=epoch)
 
@@ -1224,22 +1224,7 @@ class TrainMeanField:
 
 		return log_dict
 
-	def __save_params(self, best_run: bool, eval_dict: dict):
-		params_to_save = (self.params, self.config, eval_dict)
-		path_folder = f"{self.path_to_models}/{self.wandb_run_id}/"
-
-		if not os.path.exists(path_folder):
-			os.makedirs(path_folder)
-
-		if best_run:
-			file_name = f"best_{self.wandb_run_id}.pickle"
-		else:
-			file_name = f"{self.wandb_run_id}_T_{self.T}.pickle"
-
-		with open(os.path.join(path_folder, file_name), 'wb') as f:
-			pickle.dump(params_to_save, f)
-
-	def __save_best_params(self, eval_dict: dict, epoch):
+	def __checkpoint_payload(self, epoch: int, eval_dict: dict = None):
 		dict_to_save = {"params": self.params,
 						"opt_state": self.opt_state,
 						"T": self.T,
@@ -1247,34 +1232,25 @@ class TrainMeanField:
 						"config": self.config,
 						"logs": self.save_metrics_dict
 						}
+		if eval_dict is not None:
+			dict_to_save["eval_dict"] = eval_dict
+		return dict_to_save
+
+	def __save_checkpoint(self, file_name: str, epoch: int, eval_dict: dict = None):
 		path_folder = f"{self.path_to_models}/{self.wandb_run_id}/"
 
 		if not os.path.exists(path_folder):
 			os.makedirs(path_folder)
 
-		file_name = f"best_{self.wandb_run_id}.pickle"
-
 		with open(os.path.join(path_folder, file_name), 'wb') as f:
-			pickle.dump(dict_to_save, f)
+			pickle.dump(self.__checkpoint_payload(epoch=epoch, eval_dict=eval_dict), f)
 
-	def __save_params_every_epoch(self, epoch: int):
-		dict_to_save = {"params": self.params,
-						"opt_state": self.opt_state,
-						"T": self.T,
-						"epoch": epoch,
-						"config": self.config,
-						"logs": self.save_metrics_dict
-						}
+	def __save_checkpoint_with_prefix(self, epoch: int, file_prefix: str, every_n_epochs: int = 100, eval_dict: dict = None):
+		if every_n_epochs <= 0 or epoch % every_n_epochs != 0:
+			return
 
-		path_folder = f"{self.path_to_models}/{self.wandb_run_id}/"
-
-		if not os.path.exists(path_folder):
-			os.makedirs(path_folder)
-
-		file_name = f"{self.wandb_run_id}_last_epoch.pickle"
-
-		with open(os.path.join(path_folder, file_name), 'wb') as f:
-			pickle.dump(dict_to_save, f)
+		file_name = f"{file_prefix}_{self.wandb_run_id}_epoch_{epoch}.pickle"
+		self.__save_checkpoint(file_name, epoch=epoch, eval_dict=eval_dict)
 
 	def __save_test_dict(self, test_dict, eval_step_factor):
 		path_folder = f"{self.path_to_models}/{self.wandb_old_run_id}/"

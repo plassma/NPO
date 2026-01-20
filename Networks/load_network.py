@@ -27,7 +27,13 @@ class LoadNetwork:
 			file_name = f"{self.wandb_id}_T_{T}.pickle"
 
 		with open(f'./Checkpoints/{self.wandb_id}/{file_name}', 'rb') as f:
-			params, config = pickle.load(f)
+			loaded = pickle.load(f)
+		if isinstance(loaded, dict):
+			params = loaded["params"]
+			config = loaded["config"]
+		else:
+			params = loaded[0]
+			config = loaded[1]
 		return params, config
 
 	def __load_network(self, T, best_run):

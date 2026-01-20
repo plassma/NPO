@@ -200,116 +200,6 @@ class SolutionDatasetLoader:
         return dataloader_train
 
 
-def return_jraph(i_graph: igraph.Graph):
-    """
-    Return current igraph as jraph
-    The nodes are the external fields and the edges are the couplings
-    """
-    edges = np.array(i_graph.get_edgelist())
-    n_edges = i_graph.ecount()
-    if n_edges > 0:
-        couplings = np.array(i_graph.es['couplings'])
-
-        jraph_senders = edges[:, 0]
-        jraph_receivers = edges[:, 1]
-
-        external_fields = np.array(i_graph.vs['ext_fields'])
-        jraph_graph = jraph.GraphsTuple(nodes=external_fields,
-                                        edges=couplings,
-                                        senders=jraph_senders,
-                                        receivers=jraph_receivers,
-                                        n_node=np.array([i_graph.vcount()]),
-                                        n_edge=np.array([jraph_receivers.shape[0]]),
-                                        globals=None)
-    else:
-        raise NotImplementedError("graph has no edges")
-    #print("jraph", jraph_graph)
-    return jraph_graph
-
-class SolutionDataset(Dataset):
-    def __init__(self, config = {}, dataset="ENZYMES", problem="MIS", mode="val", relaxed=False, seed=123):
-        self.dataset_name = dataset
-        self.problem_name = problem
-        self.mode = mode
-        self.seed = seed
-        self.relaxed = relaxed
-
-        print("here")
-        print(os.path.exist("/mnt/proj2/dd-23-97/"))
-        
-        base_path = os.path.dirname(os.getcwd()) + "/DIffUCO/DatasetCreator/loadGraphDatasets/DatasetSolutions/"
-
-        if self.relaxed:
-            self.path = base_path + "no_norm/"
-
-            self.graphs_dict, self.metrics = self.__load_dataset()
-
-        else:
-            self.path = base_path + "normed_H_graph_sparse/"
-
-            self.graphs_dict, self.metrics = self.__create_jraph_dataset()
-
-    def __len__(self):
-        return len(self.normed_energies)
-
-    def __getitem__(self, item):
-        gt_normed_energy = np.array(self.metrics["Energies"][item])
-        gt_spin_state = np.array(self.metrics["gs_bins"][item]) * 2 - 1
-
-        #print(item, len(self.graphs_dict["input_graphs"]), len(self.graphs_dict["energy_graphs"]))
-        return self.graphs_dict["input_graphs"][item], self.graphs_dict["energy_graphs"][item], gt_normed_energy, gt_spin_state
-
-    def __load_dataset(self):
-        if(self.problem_name == "MaxClv2"):
-            select_data_name =  "MaxCl"
-        else:
-            select_data_name =  self.problem_name
-        base_path = os.path.join(self.path, self.dataset_name)
-        path = os.path.join(base_path, f"{self.mode}_{select_data_name}_seed_{self.seed}_solutions.pickle")
-        with open(path, 'rb') as file:
-            solution_dict = pickle.load(file)
-
-        if(self.problem_name == "MaxCl" or self.problem_name == "TSP" or self.problem_name == "MIS" or self.problem_name == "MaxClv2"):
-            energy_graphs = solution_dict["compl_H_graphs"]
-        else:
-            energy_graphs = solution_dict["H_graphs"]
-
-
-        U_net_graph_dict = solution_dict["U_net_graph_dict"]
-        Energies = solution_dict["Energies"]
-        gs_bins = solution_dict["gs_bins"]
-        input_graphs = solution_dict["H_graphs"]
-
-        self.normed_energies = Energies
-        self.gs_bin_states = gs_bins
-        if self.relaxed:
-            self.val_mean_energy = 0
-            self.val_std_energy = 1
-            metrics_dict = {"Energies": Energies, "gs_bins": gs_bins, "mean_energy": self.val_mean_energy,
-                                       "std_energy": self.val_std_energy}
-            return {"input_graphs": input_graphs, "energy_graphs": energy_graphs}, metrics_dict
-        else:
-            self.val_mean_energy = solution_dict["val_mean_Energy"]
-            self.val_std_energy = solution_dict["val_std_Energy"]
-            return_dict = {"input_graphs": input_graphs, "energy_graphs": energy_graphs, "U_net_graph_dict": U_net_graph_dict,
-                           "metrics": {"Energies": Energies, "gs_bins": gs_bins, "mean_energy": self.val_mean_energy,
-                                       "std_energy": self.val_std_energy}}
-            return return_dict
-
-    def __create_jraph_dataset(self):
-        if self.relaxed:
-            raise ValueError('__create_jraph_dataset should not be called when using relaxed states as the dataset used is not normed!')
-        return_dict = self.__load_dataset()
-
-        graph_dict = {"input_graphs": [], "energy_graphs": []}
-        for input_i_graph, energy_i_graph in zip(return_dict["input_graph"], return_dict["energy_graph"]):
-            graph_dict["input_graphs"].append(return_jraph(input_i_graph))
-            graph_dict["energy_graphs"].append(return_jraph(energy_i_graph))
-
-
-        return graph_dict, return_dict["metrics"]
-
-
 class SolutionDataset_InMemory(Dataset):
     def __init__(self, config = {}, dataset="ENZYMES", problem="MIS", mode="val", relaxed=False, seed=123):  ### TODO add orderign to config
         self.config = config
@@ -324,7 +214,7 @@ class SolutionDataset_InMemory(Dataset):
         self.N_basis_states = self.config["N_basis_states"]
 
         self.get_dataset_paths(config, mode=mode, seed=seed)
-        self._init_MCMCBuffer()
+
         # Initialize cache for loaded data
         self._data_cache = {}
         # Optional: limit cache size to prevent memory issues
@@ -332,31 +222,6 @@ class SolutionDataset_InMemory(Dataset):
         #super().__init__(self.base_path, None, None, None)
         for i in range(len(self)): # init cache
             self.__getitem__(i)
-
-    def _init_MCMCBuffer(self):
-        self.MCMCBuffer = [None for i in range(self.__len__())]
-
-    def _get__MCMCBuffer_item(self, graph, idx):
-        ### TODO randomly select indices from buffer
-        rand_idxs = np.random.choice(self.buffer_size, self.N_basis_states)
-        if isinstance(self.MCMCBuffer[idx], np.ndarray):
-            X_sequence = self.MCMCBuffer[idx][:,:,rand_idxs]
-        else:
-            init_X_sequence = np.zeros((graph.nodes.shape[0], self.n_diffusion_steps, self.buffer_size, 1))
-            self.MCMCBuffer[idx] = init_X_sequence
-            X_sequence = init_X_sequence[:,:,rand_idxs]
-
-        return X_sequence, rand_idxs
-
-    def update_MCMC_buffer(self, updated_X_sequence, idx, rand_idxs):
-        if isinstance(self.MCMCBuffer[idx], np.ndarray):
-            self.MCMCBuffer[idx][:, :, rand_idxs] = updated_X_sequence
-        else:
-            init_X_sequence = np.zeros((updated_X_sequence.shape[0], self.n_diffusion_steps, self.buffer_size, 1))
-            self.MCMCBuffer[idx] = init_X_sequence
-            self.MCMCBuffer[idx][:, :, rand_idxs] = updated_X_sequence
-
-        return True
 
     def get_dataset_paths(self, cfg, mode="", seed=None):
         if(self.problem_name == "MaxClv2"):

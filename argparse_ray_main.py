@@ -80,6 +80,7 @@ parser.add_argument('--use-sample', default=0, type = int, help='Which HCP sampl
 parser.add_argument('--load_wandb_id', default=None, type = str, help='Define wandb id to load from checkpoint')
 parser.add_argument('--embedding_dim', default=32, type = int, help='embedding dimension')
 parser.add_argument('--load-only-params', action='store_true', help='whether to only load params from wandb checkpoint', default=False)
+parser.add_argument('--load-step', default=-1, type = int, help='which step to load from wandb checkpoint')
 parser.set_defaults(bfloat16=False)
 
 parser.set_defaults(CE=False)
@@ -152,7 +153,7 @@ def meanfield_run():
         if args.EnergyFunction == "MIS":
             run(flexible_config = {"jit": False, "dataset_name": "RB_iid_100", "problem_name": "MIS", "edge_updates": False, "mode_node_edge": "node", "n_diffusion_steps": 3}, overwrite = True)
         else:
-            run(flexible_config = {"load_only_params": args.load_only_params, "node_transformer_num_layers": args.node_transformer_layers, "N_equil": args.N_equil, "AnnealSchedule": args.AnnealSchedule, "use_sample": args.use_sample, "jit": args.jit, "dataset_name": "HCP_dummy", "problem_name": "HCP", "edge_updates": True, "N_anneal": args.N_anneal[0], "load_wandb_id": args.load_wandb_id, "n_diffusion_steps": args.n_diffusion_steps[0], "minib_diff_steps": args.minib_diff_steps, "minib_basis_states": args.minib_basis_states, "N_basis_states": args.n_basis_states[0], "train_mode": args.train_mode, "T_max": args.temps[0], "T_target": args.T_target, "T_explore": args.T_explore, "anneal_explore_period": args.anneal_explore_period, "explore_fraction": args.explore_fraction, "embedding_dim": args.embedding_dim, "lr": args.lrs[0], "min_lr": args.lrs[0] / 4}, overwrite = True) # "load_wandb_id": "oz5t74ww"
+            run(flexible_config = {"load_step": args.load_step, "load_only_params": args.load_only_params, "node_transformer_num_layers": args.node_transformer_layers, "N_equil": args.N_equil, "AnnealSchedule": args.AnnealSchedule, "use_sample": args.use_sample, "jit": args.jit, "dataset_name": "HCP_dummy", "problem_name": "HCP", "edge_updates": True, "N_anneal": args.N_anneal[0], "load_wandb_id": args.load_wandb_id, "n_diffusion_steps": args.n_diffusion_steps[0], "minib_diff_steps": args.minib_diff_steps, "minib_basis_states": args.minib_basis_states, "N_basis_states": args.n_basis_states[0], "train_mode": args.train_mode, "T_max": args.temps[0], "T_target": args.T_target, "T_explore": args.T_explore, "anneal_explore_period": args.anneal_explore_period, "explore_fraction": args.explore_fraction, "embedding_dim": args.embedding_dim, "lr": args.lrs[0], "min_lr": args.lrs[0] / 4}, overwrite = True) # "load_wandb_id": "oz5t74ww"
     elif(args.multi_gpu):
         detect_and_run_for_loops()
     # else:
@@ -330,7 +331,7 @@ def run( flexible_config, overwrite = True):
         "noise_potential": "annealed_obj",
 
         "time_conditioning": True,
-        "piecewise_linear_anneal_schedule": [(0, 0.001), (2500, 0.004), (1200, 0.0075)],
+        "piecewise_linear_anneal_schedule": [(0, 0.0015), (2500, 0.005), (5000, 0.006)],
         "project_name": args.project_name,
         "mean_aggr": False,
         "grad_clip": True,
@@ -377,7 +378,8 @@ def run( flexible_config, overwrite = True):
             "energy_order_violations_rooms": 0.,
             "exp_cabinets_things_rooms": 2.0,
             "order_severity": False
-        }
+        },
+        "load_step": -1,
     }
     
     if(overwrite):
