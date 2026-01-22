@@ -22,10 +22,10 @@ from jax.tree_util import tree_flatten
 import time
 import jraph_utils
 from utils import reshape_utils
-from utils import dict_count
 import os
 import tempfile
 import warnings
+import uuid
 
 
 class TrainMeanField:
@@ -48,6 +48,7 @@ class TrainMeanField:
 
 		# if epoch % save_modulo == 0 the params will be saved
 		self.save_modulo = 100
+		self.save_checkpoints = bool(self.config.get("save_checkpoints", True))
 
 		self.dataset_name = self.config["dataset_name"]
 		self.problem_name = self.config["problem_name"]
@@ -87,19 +88,13 @@ class TrainMeanField:
 			self.lr_schedule = self.config["lr_schedule"]
 
 		self.batch_size = self.config["batch_size"]
-		self.energy_per_node_dim = 1#self.config["n_random_node_features"]
+		self.energy_per_node_dim = 1
 
 		self.relaxed = self.config["relaxed"]
 
 		self.T_max = self.config["T_max"]
-		self.T_explore = self.config.get("T_explore", None)
-		if self.T_explore is None:
-			self.T_explore = self.T_max
-		self.config["T_explore"] = self.T_explore
-		self.anneal_explore_period = self.config.get("anneal_explore_period", self.config.get("anneal_explore", 0))
-		self.explore_fraction = self.config.get("explore_fraction", 0.0)
-		self.config["anneal_explore_period"] = self.anneal_explore_period
-		self.config["explore_fraction"] = self.explore_fraction
+
+		
 		self.T = self.T_max
 		self.N_warmup = self.config["N_warmup"]
 		self.N_anneal = self.config["N_anneal"]
@@ -141,11 +136,9 @@ class TrainMeanField:
 		self.n_features_list_messages = self.config["n_features_list_messages"]
 		self.n_features_list_encode = self.config["n_features_list_encode"]
 		self.n_features_list_decode = self.config["n_features_list_decode"]
-		self.n_message_passes = self.config["n_message_passes"]
 		self.message_passing_weight_tied = self.config["message_passing_weight_tied"]
 		self.linear_message_passing = self.config["linear_message_passing"]
-		self.sample_groupwise = self.config.get("sample_groupwise", False)
-		self.config["sample_groupwise"] = self.sample_groupwise
+
 		self.transformer_type = self.config.get("transformer_type", "linear")
 		self.config["transformer_type"] = self.transformer_type
 
@@ -229,10 +222,8 @@ class TrainMeanField:
 		else:
 			self.time_conditioning = False
 
-		if self.config["wandb"]:
-			self.wandb_mode = "online"
-		else:
-			self.wandb_mode = "disabled"
+		self.use_wandb = bool(self.config.get("wandb", False))
+		self.wandb_mode = "online" if self.use_wandb else "disabled"
 
 		# self.wandb_mode = "disabled"
 
@@ -240,13 +231,16 @@ class TrainMeanField:
 
 		self.wandb_project = f"{self.project_name}{config['mode']}_{config['dataset_name']}_{config['problem_name']}_relaxed_{config['relaxed']}_deeper" + ("_loaded" if self.load_wandb_id != None else "")
 		if config['T_max'] > 0.:
-			self.wandb_group = f"{config['seed']}_LMP_T_{config['T_max']}_noise_potential_{config['noise_potential']}_anneal_{config['N_anneal']}_MPasses_{config['n_message_passes']}"
+			self.wandb_group = f"{config['seed']}_LMP_T_{config['T_max']}_noise_potential_{config['noise_potential']}_anneal_{config['N_anneal']}"
 		else:
-			self.wandb_group = f"{config['seed']}_LMP_T_{config['T_max']}_anneal_{config['N_anneal']}_MPasses_{config['n_message_passes']}"
+			self.wandb_group = f"{config['seed']}_LMP_T_{config['T_max']}_anneal_{config['N_anneal']}"
 
 		wandb_run = f"sample_{config['use_sample']}_emb_{config['embedding_dim']}_n_diff_{config['n_diffusion_steps']}_T_{config['T_max']:.6f}"
 
-		self.wandb_run_id = wandb.util.generate_id()
+		if self.use_wandb:
+			self.wandb_run_id = wandb.util.generate_id()
+		else:
+			self.wandb_run_id = uuid.uuid4().hex
 		self.wandb_run = f"{self.load_wandb_id}_{self.wandb_run_id}_{wandb_run}"
 
 		self.best_rel_error = float('inf')
@@ -265,6 +259,7 @@ class TrainMeanField:
 		self.__init_optimizer_and_params()
 		self.__init_functions()
 		self.__init_wandb(self.config)
+		self.last_eval_log = None
 		#self.__init_beta_list()
 
 	def __init__Trainer(self):
@@ -365,7 +360,6 @@ class TrainMeanField:
 								n_features_list_encode=self.n_features_list_encode,
 								n_features_list_decode=self.n_features_list_decode,
 								n_diffusion_steps = self.n_diffusion_steps,
-								n_message_passes=self.n_message_passes,
 							   time_encoding = self.time_encoding,
 								n_diff_steps = self.n_diffusion_steps,
 							   message_passing_weight_tied=self.message_passing_weight_tied,
@@ -497,17 +491,13 @@ class TrainMeanField:
 			U_net_graph_dict = jraph_graph_dict["U_net_graph_dict"][0]
 			U_net_graph_dict = jax.tree_util.tree_map(lambda x: jnp.array(x), U_net_graph_dict)
 			print(jax.tree_util.tree_map(lambda x: x.shape, U_net_graph_dict))
-			#batched_U_net_graph_dict = batch_U_net_graph_dict(jraph_graph_dict["U_net_graph_dict"])
-			#batched_U_net_graph_dict_2 = pmap_batch_U_net_graph_dict_and_pad(jraph_graph_dict["U_net_graph_dict"])
-			input_graph_list, energy_graphs = self._prepare_graphs(jraph_graph_dict)
 
-			#node_features = self.n_diffusion_steps + self.n_random_node_features + self.n_bernoulli_features
+			input_graph_list, energy_graphs = self._prepare_graphs(jraph_graph_dict)
 
 			X_prev = jnp.ones((U_net_graph_dict["graphs"][0].nodes.shape[0], 1))
 			rand_node_features = jnp.ones((U_net_graph_dict["graphs"][0].nodes.shape[0], self.energy_per_node_dim))
 			self.params = self.model.init({"params": subkey}, U_net_graph_dict, X_prev,rand_node_features, 0, subkey)
-			# X_prev = jnp.ones(batched_U_net_graph_dict["graphs"][0].nodes.shape[:-1] +(node_features,))
-			# self.model.apply(self.params, batched_U_net_graph_dict, X_prev)
+
 		else:
 			raise ValueError("")
 
@@ -537,6 +527,8 @@ class TrainMeanField:
 
 		@param project: project name
 		"""
+		if not self.use_wandb:
+			return
 		if(self.config["wandb"]):
 			wandb.init(project=self.wandb_project, name=self.wandb_run, group=self.wandb_group, id=self.wandb_run_id,
 				   config=config, mode=self.wandb_mode, settings=wandb.Settings(_service_wait=300))
@@ -611,23 +603,6 @@ class TrainMeanField:
 		else:
 			raise ValueError("schedule not implemented")
 
-	def _apply_exploration_temperature(self, epoch, base_temperature):
-		"""
-		Raise temperature to T_explore for the first explore_fraction of each anneal_explore_period.
-		"""
-		if self.anneal_explore_period <= 0 or self.explore_fraction <= 0:
-			return base_temperature
-		explore_steps = max(1, int(np.ceil(self.anneal_explore_period * self.explore_fraction)))
-		explore_steps = min(explore_steps, self.anneal_explore_period)
-		if (epoch % self.anneal_explore_period) < explore_steps:
-			return self.T_explore
-		return base_temperature
-
-	def _calculate_temperature(self, epoch):
-		base_temperature, skip_epoch = self._temperature_from_schedule(epoch)
-		if skip_epoch:
-			return base_temperature, True
-		return self._apply_exploration_temperature(epoch, base_temperature), False
 
 	def train_step(self, batch_dict):
 		### TODO add code that switches of the buffer
@@ -641,11 +616,12 @@ class TrainMeanField:
 
 		return loss, (log_dict, energy_graph_batch, batching_time)
 
-	def train(self):
+	def train(self, max_epochs=None, max_batches=None, eval_every=100, return_metrics=False):
 
-		wandb.define_metric("train/metrics")
-		wandb.define_metric("train/loss" )
-		wandb.define_metric("train/loss" )
+		if self.use_wandb:
+			wandb.define_metric("train/metrics")
+			wandb.define_metric("train/loss" )
+			wandb.define_metric("train/loss" )
 
 		print("first evaluation...")
 		self.save_metrics_dict = {}
@@ -653,16 +629,22 @@ class TrainMeanField:
 		self.save_metrics_dict["eval/gt_energy"] = []
 		self.save_metrics_dict["eval/rel_error"] = []
 		self.__save_checkpoint(f"{self.wandb_run_id}_last_epoch.pickle", epoch=0)
-		self.eval(epoch=0)
+		self.last_eval_log = self.eval(epoch=0)
 		print("start training...")
-		epoch_range = np.arange(self.curr_epoch, self.epochs)
+		epoch_start = self.curr_epoch
+		epoch_end = self.epochs
+		if max_epochs is not None:
+			epoch_end = min(epoch_end, epoch_start + max_epochs)
+		epoch_range = np.arange(epoch_start, epoch_end)
 		print("start training for ", self.epochs, self.curr_epoch)
 		#graph_shape_list = []
+		last_epoch = None
 		for epoch in tqdm(epoch_range, desc="Training"):
+			last_epoch = epoch
 			print("epoch", epoch, "in", self.epochs)
 			start_train_time = time.time()
 
-			self.T, skip_epoch = self._calculate_temperature(epoch)
+			self.T, skip_epoch = self._temperature_from_schedule(epoch)
 			self.ownership_weight = 1#0.1 + epoch * 2 / self.epochs
 			if skip_epoch:
 				continue
@@ -676,6 +658,8 @@ class TrainMeanField:
 			epoch_time_dict["epoch_time/backprob"] = []
 			epoch_time_dict["epoch_time/logging"] = []
 			for iter, (batch_dict) in enumerate(self.dataloader_train):
+				if max_batches is not None and iter >= max_batches:
+					break
 				gt_normed_energies = batch_dict["energies"]
 				print("batch", iter, "of", len(self.dataloader_train))
 				print("batchsize is", len(gt_normed_energies))
@@ -769,16 +753,24 @@ class TrainMeanField:
 					train_log_dict["train/" + key] = np.mean(wandb_log_dict[key])
 
 			combined_train_log = {**train_log_dict, **wandb_epoch_time_dict}
-			wandb.log(combined_train_log, step=epoch)
+			if self.use_wandb:
+				wandb.log(combined_train_log, step=epoch)
 
-			if (epoch + 1) % 100 == 0:
-				self.eval(epoch=epoch + 1)
+			if eval_every is not None and (epoch + 1) % eval_every == 0:
+				self.last_eval_log = self.eval(epoch=epoch + 1)
 
 			if self.epochs_since_best == self.stop_epochs:
 				# early stopping
 				print("run stopped due to break condition")
 				break
-		wandb.finish()
+		if return_metrics and (self.last_eval_log is None or (eval_every is None) or (last_epoch is not None and (last_epoch + 1) % eval_every != 0)):
+			eval_epoch = (last_epoch + 1) if last_epoch is not None else self.curr_epoch
+			self.last_eval_log = self.eval(epoch=eval_epoch)
+
+		if self.use_wandb:
+			wandb.finish()
+		if return_metrics:
+			return self.last_eval_log
 
 	def sample(self,N = 4000):
 		dataloader = self.dataloader_val
@@ -823,9 +815,10 @@ class TrainMeanField:
 
 			loss, (log_dict, _) = self.TrainerClass.evaluation_step(self.params, graph_batch, energy_graph_batch, self.T, batched_key, mode = mode, epoch = epoch, epochs = self.epochs)
 
-			with tempfile.NamedTemporaryFile(suffix=".png") as target:
-				plot(None, graph_batch["graphs"][0].graph.globals["node_types"][0, :-1],target.name, solution_nodes=log_dict["X_0"][0, :-1, 0, 0], meta_graph=graph_batch["graphs"][0])
-				wandb.log({"random sample": wandb.Image(target.name)}, commit=False, step=epoch)
+			if self.use_wandb:
+				with tempfile.NamedTemporaryFile(suffix=".png") as target:
+					plot(None, graph_batch["graphs"][0].graph.globals["node_types"][0, :-1],target.name, solution_nodes=log_dict["X_0"][0, :-1, 0, 0], meta_graph=graph_batch["graphs"][0])
+					wandb.log({"random sample": wandb.Image(target.name)}, commit=False, step=epoch)
 
 
 			log_dict_metrics = jax.tree_util.tree_map(reshape_utils.unravel_dict, log_dict["metrics"])
@@ -908,7 +901,10 @@ class TrainMeanField:
 
 		self.__save_checkpoint(f"{self.wandb_run_id}_last_epoch.pickle", epoch=epoch)
 
-		wandb.log(eval_log_dict, step=epoch)
+		if self.use_wandb:
+			wandb.log(eval_log_dict, step=epoch)
+		self.last_eval_log = eval_log_dict
+		return eval_log_dict
 
 	def test(self, mode = "test"):
 
@@ -1092,6 +1088,8 @@ class TrainMeanField:
 		return input_graph, energy_graph
 
 	def __plot_figures(self, log_dict, mode = "eval", step = None):
+		if not self.use_wandb:
+			return
 		if "figures" in log_dict.keys():
 			plt_dict = {}
 			figure_dict = log_dict["figures"]
@@ -1237,6 +1235,8 @@ class TrainMeanField:
 		return dict_to_save
 
 	def __save_checkpoint(self, file_name: str, epoch: int, eval_dict: dict = None):
+		if not self.save_checkpoints:
+			return
 		path_folder = f"{self.path_to_models}/{self.wandb_run_id}/"
 
 		if not os.path.exists(path_folder):
@@ -1246,6 +1246,8 @@ class TrainMeanField:
 			pickle.dump(self.__checkpoint_payload(epoch=epoch, eval_dict=eval_dict), f)
 
 	def __save_checkpoint_with_prefix(self, epoch: int, file_prefix: str, every_n_epochs: int = 100, eval_dict: dict = None):
+		if not self.save_checkpoints:
+			return
 		if every_n_epochs <= 0 or epoch % every_n_epochs != 0:
 			return
 
@@ -1253,6 +1255,8 @@ class TrainMeanField:
 		self.__save_checkpoint(file_name, epoch=epoch, eval_dict=eval_dict)
 
 	def __save_test_dict(self, test_dict, eval_step_factor):
+		if not self.save_checkpoints:
+			return
 		path_folder = f"{self.path_to_models}/{self.wandb_old_run_id}/"
 
 		if not os.path.exists(path_folder):
@@ -1264,6 +1268,8 @@ class TrainMeanField:
 			pickle.dump(test_dict, f)
 
 	def __save_stuff(self, stuff_dict, stuff_name = ""):
+		if not self.save_checkpoints:
+			return
 		path_folder = f"{self.path_to_models}/{self.wandb_old_run_id}/"
 
 		if not os.path.exists(path_folder):

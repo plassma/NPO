@@ -2,7 +2,7 @@
     // Use IntelliSense to learn about possible attributes.
     // Hover to view descriptions of existing attributes.
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    // python argparse_ray_main.py --lrs 0.002 --GPUs 4 --n_GNN_layers 8 --temps 0.6 --IsingMode HCP_dummy --EnergyFunction HCP --N_anneal 2000 --n_diffusion_steps 3 --batch_size 20 --n_basis_states 10 --noise_potential bernoulli --project_name FirstRunsHCP --seed 123 --debug
+    // python argparse_ray_main.py --lrs 0.002 --GPUs 4 --temps 0.6 --IsingMode HCP_dummy --EnergyFunction HCP --N_anneal 2000 --n_diffusion_steps 3 --batch_size 20 --n_basis_states 10 --noise_potential bernoulli --project_name FirstRunsHCP --seed 123 --debug
     "version": "0.2.0",
     "configurations": [
         {
@@ -26,7 +26,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "argparse_ray_main.py",
-            "args": ["--lrs", "0.002", "--GPUs", "3", "--n_GNN_layers", "8", "--temps", "0.6", "--IsingMode", "RB_iid_100", "--EnergyFunction", "MIS", "--N_anneal", "2000", "--n_diffusion_steps", "3", "--batch_size", "20", "--n_basis_states", "10", "--noise_potential", "annealed_obj", "--project_name", "FirstRuns", "--seed", "123", "--debug"],
+            "args": ["--lrs", "0.002", "--GPUs", "3", "--temps", "0.6", "--IsingMode", "RB_iid_100", "--EnergyFunction", "MIS", "--N_anneal", "2000", "--n_diffusion_steps", "3", "--batch_size", "20", "--n_basis_states", "10", "--noise_potential", "annealed_obj", "--project_name", "FirstRuns", "--seed", "123", "--debug"],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "4"
             }
@@ -47,7 +47,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "argparse_ray_main.py",
-            "args": ["--lrs", "0.002", "--GPUs", "2,3", "--IsingMode", "HCP_dummy", "--EnergyFunction", "HCP", "--N_anneal", "2000", "--batch_size", "20", "--n_basis_states", "20", "--noise_potential", "annealed_obj", "--project_name", "FirstRunsHCP", "--seed", "123", "--debug", "--jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "2", "--minib_basis_states", "10", "--train_mode", "PPO", "--use-sample", "0", "--temps", "0.0", "--T_target", "0.0", "--AnnealSchedule", "linear"],
+            "args": ["--lrs", "0.0001", "--GPUs", "2", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "1000", "--noise_potential", "annealed_obj", "--project_name", "FirstRunsHCP", "--seed", "123", "--debug", "--jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "Forward_KL", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "4"
             },

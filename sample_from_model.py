@@ -9,7 +9,6 @@ import jax.numpy as jnp
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--debug', action='store_true', help='Switch ray into local mode for debugging')
-parser.add_argument('--multi_gpu', action='store_true', help='wheter to use multi gpu or not, KEEP IT ALWAYS TRUE')
 parser.add_argument('--mode', default='Diffusion', choices = ["Diffusion"], help='Define the Approach')
 parser.add_argument('--EnergyFunction', default='MIS', choices = ["MaxCut", "MIS", "MVC", "MaxCl", "WMIS", "MDS", "MaxClv2", "TSP", "IsingModel", "SpinGlass", "SpinGlass", "HCP"], help='Define the EnergyFunction of the IsingModel')
 parser.add_argument('--IsingMode', default='RB_iid_100', choices = ["Gset","BA_large","RB_iid_small", "RB_iid_dummy", "BA_dummy", "RB_iid_large" ,"RRG_200_k_=all", "BA_small","TSP_random_100", 
@@ -26,8 +25,6 @@ parser.add_argument('--lrs', default=[5e-5], type = float, help='Define gridsear
 parser.add_argument('--lr_schedule', default="cosine", choices = ["cosine", "cosine_warm_restarts", "None"], help='use learning rate schedule or not')
 parser.add_argument('--seed', default=[123], type = int, help='Define dataset seed', nargs = "+")
 parser.add_argument('--GPUs', default=["0"], type = str, help='Define Nb', nargs = "+")
-parser.add_argument('--n_hidden_neurons', default=[64], type = int, help='number of hidden neurons', nargs = "+")
-parser.add_argument('--n_rand_nodes', default=2, type = int, help='define node embedding size')
 parser.add_argument('--stop_epochs', default=10000, type = int, help='define early stopping')
 parser.add_argument('--n_diffusion_steps', default=[9], type = int, help='define number of diffusion steps', nargs = "+")
 parser.add_argument('--time_encoding', default="one_hot", type = str, help='encoding of diffusion steps')
@@ -38,7 +35,6 @@ parser.add_argument('--batch_size', default=[30], type = int, help='number of gr
 parser.add_argument('--minib_diff_steps', default=1, type = int, help='minibatch size in diffusion steps in PPO/GRPO or forward KL')
 parser.add_argument('--minib_basis_states', default=10, type = int, help='minibatch size in basis states in PPO/GRPO or forward KL')
 parser.add_argument('--inner_loop_steps', default=1, type = int, help='number of inner loop steps in PPO/GRPO or forward KL')
-parser.add_argument('--n_GNN_layers', default=[8], type = int, help='num of GNN Layers', nargs = "+")
 parser.add_argument('--project_name', default= "", type = str, help='define project name')
 parser.add_argument('--beta_factor', default=[1.], type = float, help='desfine noise strength', nargs = "+")
 parser.add_argument('--loss_alpha', default=0.0, type = float, help='rel weighteing between forward and reverse KL')
@@ -81,7 +77,6 @@ parser.set_defaults(time_conditioning=True)
 parser.set_defaults(deallocate=False)
 parser.set_defaults(jit=False)
 parser.set_defaults(linear_message_passing=True)
-parser.set_defaults(multi_gpu=True)
 parser.set_defaults(GPUs=["2"])
 parser.set_defaults(train_mode="PPO")
 args = parser.parse_args()
@@ -121,7 +116,7 @@ def meanfield_run():
     np.set_printoptions(threshold=np.inf, linewidth=np.inf, suppress=True,)# precision=4
 
 
-    run(flexible_config = {"use_sample": 2, "jit": False, "dataset_name": "HCP_dummy", "problem_name": "HCP", "edge_updates": True, "mode_node_edge": "edge", "N_anneal": args.N_anneal[0], "load_wandb_id": "m68s1bnd","n_random_node_features": 16, "n_diffusion_steps": args.n_diffusion_steps[0], "minib_diff_steps": args.minib_diff_steps, "minib_basis_states": args.minib_basis_states, "N_basis_states": args.n_basis_states[0], "train_mode": args.train_mode}, overwrite = True) # "load_wandb_id": "oz5t74ww"
+    run(flexible_config = {"use_sample": 2, "jit": False, "dataset_name": "HCP_dummy", "problem_name": "HCP", "edge_updates": True, "mode_node_edge": "edge", "N_anneal": args.N_anneal[0], "load_wandb_id": "m68s1bnd", "n_diffusion_steps": args.n_diffusion_steps[0], "minib_diff_steps": args.minib_diff_steps, "minib_basis_states": args.minib_basis_states, "N_basis_states": args.n_basis_states[0], "train_mode": args.train_mode}, overwrite = True) # "load_wandb_id": "oz5t74ww"
 
 
 
@@ -142,8 +137,6 @@ def run( flexible_config, overwrite = True):
         "batch_size": 30, # H
         "N_basis_states": 100, # n_s
 
-        "random_node_features": True,
-        "n_random_node_features": 5,
         "relaxed": False,
 
         "T_max": 0.01,
@@ -154,14 +147,12 @@ def run( flexible_config, overwrite = True):
         "stop_epochs": 2000,
 
         ### TODO rework network and remove edge updates
-        "n_hidden_neurons": 64,
         "n_features_list_prob": [64, 2],
         "n_features_list_nodes": [64, 64],
         "n_features_list_edges": [10],
         "n_features_list_messages": [64, 64],
         "n_features_list_encode": [30],
         "n_features_list_decode": [64],
-        "n_message_passes": 5,
         "message_passing_weight_tied": False,
         "linear_message_passing": True,
         "edge_updates": False,

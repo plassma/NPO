@@ -31,3 +31,9 @@ class BaseEnergyClass(ABC):
     @partial(jax.jit, static_argnums=(0,))
     def calculate_Energy_CE(self, graphs, X_0, node_gr_idx):
         pass
+
+    def get_log_p_0_from_energy(self, Energy, T):
+        T = jnp.max(jnp.array([T, 10**-6]))
+
+        log_p_0 = -1/T*Energy[...,0]
+        return log_p_0

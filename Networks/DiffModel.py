@@ -8,10 +8,11 @@ from Networks.Modules.Transformer.TransformerEncoderStack import TransformerEnco
 from Networks.Modules.Transformer.LinearTransformerEncoderStack import LinearTransformerEncoderStack
 from Networks.Modules.xLSTM.mlstm import mLSTMStack
 from house_config import prior_logits_for_graph
-
-from Networks.Modules.HeadModules.RLHead import global_graph_aggr
+from jraph_utils import global_graph_aggr
 from Networks.Modules.MLPModules.MLPs import ValueMLP
 from house_config.utils import CABINETS, ROOMS, THINGS
+
+
 
 class DiffModel(nn.Module):
 	"""
@@ -27,7 +28,6 @@ class DiffModel(nn.Module):
 	n_features_list_decode: np.ndarray
 
 	n_diffusion_steps: int
-	n_message_passes: int
 	edge_updates: bool
 	problem_type: str
 
@@ -293,22 +293,6 @@ class DiffModel(nn.Module):
 		out_dict["graph_log_prob"] = graph_log_prob
 		return out_dict, key
 	
-	@partial(flax.linen.jit, static_argnums=0)
-	def make_one_step_force_samples(self,params ,jraph_graph_list, X_prev, X_next, energy_per_node, t_idx_per_node, key, step: int = 0):
-		rand_nodes, key = self.reinit_rand_nodes(X_prev, key)
-
-		
-		node_graph_idx, n_graph, n_node = self.get_graph_info(jraph_graph_list)
-
-		out_dict, key = self.apply(params, jraph_graph_list, X_prev, energy_per_node, t_idx_per_node, key, deterministic=True)
-		X_next, spin_log_probs = self.force_sample_from_model(out_dict["spin_logits"], X_next)
-
-		graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(spin_log_probs[...,0], node_graph_idx, n_graph)/(n_node))[:-1]))
-		out_dict["X_next"] = X_next
-		out_dict["spin_log_probs"] = spin_log_probs
-		out_dict["state_log_probs"] = self.__get_log_prob(spin_log_probs[...,0], node_graph_idx, n_graph)
-		out_dict["graph_log_prob"] = graph_log_prob
-		return out_dict, key
 	
 	@partial(flax.linen.jit, static_argnums=0)
 	def unbiased_last_step(self,params ,jraph_graph_list, X_prev, t_idx, key, eps = 0.01):
@@ -353,16 +337,12 @@ class DiffModel(nn.Module):
 
 
 		one_hot_state = jax.nn.one_hot(X_next, num_classes=jraph_graph_list["graphs"][0].meta["cabinets"])
-		#X_next = jnp.expand_dims(X_next, axis = -1)
+
 		spin_log_probs = jnp.sum(spin_logits * one_hot_state, axis=-1)
 
-		#print("Diff model model samples", X_next.shape, one_hot_state.shape)
+
 		return X_next, spin_log_probs, key
-	@partial(flax.linen.jit, static_argnums=0)
-	def force_sample_from_model(self, spin_logits, X_next):
-		one_hot_state = jax.nn.one_hot(X_next, num_classes=spin_logits.shape[-1])
-		spin_log_probs = jnp.sum(spin_logits * one_hot_state, axis=-1)
-		return X_next, spin_log_probs
+
 	
 	@partial(flax.linen.jit, static_argnums=0)
 	def calc_log_q(self, params, jraph_graph_list, X_prev, energy_per_node, X_next, t_idx_per_node, key):
@@ -444,13 +424,10 @@ class DiffModel(nn.Module):
 
 	#@partial(flax.linen.jit, static_argnums=(0,-1))
 	def __get_log_prob(self, spin_log_probs, node_graph_idx, n_graph):
-		log_probs = self.__global_graph_aggr(spin_log_probs, node_graph_idx, n_graph)
+		log_probs = global_graph_aggr(spin_log_probs, node_graph_idx, n_graph)
 		return log_probs
 
-	#@partial(flax.linen.jit, static_argnums=(0,-1))
-	def __global_graph_aggr(self, feature, node_graph_idx, n_graph):
-		aggr_feature = jax.ops.segment_sum(feature, node_graph_idx, n_graph)
-		return aggr_feature
+	
 
 
 def get_sinusoidal_positional_encoding(timestep, embedding_dim, max_position=10000.0):

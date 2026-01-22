@@ -7,6 +7,9 @@ import time
 import jax.tree_util as tree
 from GraphWithMeta import GraphWithMeta
 
+def global_graph_aggr(feature, node_graph_idx, n_graph):
+		aggr_feature = jax.ops.segment_sum(feature, node_graph_idx, n_graph)
+		return aggr_feature
 
 def _ensure_list(graphs):
     if isinstance(graphs, (list, tuple)):

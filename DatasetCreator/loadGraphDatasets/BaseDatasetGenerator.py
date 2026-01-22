@@ -104,12 +104,7 @@ class BaseDatasetGenerator(ABC):
 		solution = np.ones_like(H_graph.nodes)
 		runtime = None
 
-		if self.problem == "MaxCl":
-			H_graph_compl = jutils.from_igraph_to_jgraph(g.complementer(loops=False), double_edges=False)
-		elif self.problem == "MIS" or self.problem == "MVC" or self.problem == "MaxCut":
-			H_graph_compl = jutils.from_igraph_to_jgraph(g, double_edges=False)
-		else:
-			H_graph_compl = None
+		H_graph_compl = None
 		return Energy, boundEnergy, solution, runtime, H_graph_compl
 
 	def igraph_to_jraph(self, g: ig.Graph) -> (jraph.GraphsTuple, float, int):

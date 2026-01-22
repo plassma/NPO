@@ -10,7 +10,6 @@ from .ppo_utils import select_time_indices
 import time
 import optax
 from utils import MovingAverages
-from jax import nn
 from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
@@ -42,7 +41,6 @@ class PPO(Base):
 
         self.pmap_calc_traces = jax.pmap(self._calc_traces, in_axes=(0,0))
         self.pmap_environment_steps = jax.pmap(lambda a,b,c,d,e,f: self._environment_steps_scan(a,b,c,d,e,f, "train"), in_axes=(0, 0, 0, None, None, 0))
-        self.pmap_environment_steps_force_samples = jax.pmap(lambda a,b,c,d,e,f,g: self._environment_steps_scan_force_samples(a,b,c,d,e,f,g, "train"), in_axes=(0, 0, 0, 0, None, None, 0))
         self._environment_steps_scan_eval = lambda a,b,c,d,e,f: self._environment_steps_scan(a,b,c,d,e,f, "eval")
 
         self.PPO_loss_grad = jax.jit(jax.value_and_grad(self.PPO_loss, has_aux=True))
@@ -218,8 +216,8 @@ class PPO(Base):
         return (loss, (loss_dict, key)), params, opt_state
 
 
-    @partial(jax.jit, static_argnums=0, static_argnames=("deterministic", "force_samples"))
-    def scan_body(self, scan_dict, y, deterministic: bool, force_samples: bool = False):
+    @partial(jax.jit, static_argnums=0, static_argnames=("deterministic", ))
+    def scan_body(self, scan_dict, y, deterministic: bool):
         i = scan_dict["step"]
         T = scan_dict["T"]
         params = scan_dict["params"]
@@ -239,28 +237,17 @@ class PPO(Base):
 
         batched_key = jax.random.split(subkey, num=X_prev.shape[1])
 
-        if force_samples:
-            out_dict, _ = self._vmapped_make_one_step_force_samples(
-                params,
-                graphs,
-                X_prev,
-                X_next,
-                energy_per_node,
-                model_step_idx_per_node,
-                batched_key,
-                scan_dict["step"],
-            )
-        else:
-            out_dict, _ = self.vmapped_make_one_step(
-                params,
-                graphs,
-                X_prev,
-                energy_per_node,
-                model_step_idx_per_node,
-                batched_key,
-                deterministic,
-                scan_dict["step"],
-            )
+        
+        out_dict, _ = self.vmapped_make_one_step(
+            params,
+            graphs,
+            X_prev,
+            energy_per_node,
+            model_step_idx_per_node,
+            batched_key,
+            deterministic,
+            scan_dict["step"],
+        )
 
         X_next = out_dict["X_next"]
         spin_log_probs = out_dict["spin_log_probs"]
@@ -268,9 +255,6 @@ class PPO(Base):
         spin_logits_next = out_dict["spin_logits"]
         graph_log_prob = out_dict["graph_log_prob"]
         Values = out_dict["Values"]
-        #rand_node_features = out_dict["rand_node_features"]
-
-        #scan_dict["rand_node_features_diff_steps"] = scan_dict["rand_node_features_diff_steps"].at[i].set(rand_node_features)
 
         entropy_step = self._get_entropy_step(energy_graph_batch, state_log_probs, node_gr_idx)
         ### TODO is this still correct for annealed noise distr? Anneled reward should be given to step i-1?!
@@ -319,8 +303,7 @@ class PPO(Base):
         noise_rewards = jnp.zeros((overall_diffusion_steps , n_graphs, X_prev.shape[1]), dtype=jnp.float32)
         entropy_rewards = jnp.zeros((overall_diffusion_steps , n_graphs, X_prev.shape[1]), dtype=jnp.float32)
         Values_over_diff_steps = jnp.zeros((overall_diffusion_steps + 1, n_graphs, X_prev.shape[1]), dtype=jnp.float32)
-        rand_node_features_diff_steps = jnp.zeros(
-            (overall_diffusion_steps, X_prev.shape[0], X_prev.shape[1], self.n_random_node_features), dtype=jnp.float32)
+        
 
         prob_over_diff_steps = prob_over_diff_steps.at[0].set(jnp.exp((jax.ops.segment_sum((log_p_uniform * one_hot_state).sum(-1), node_gr_idx, n_graphs) / energy_graph_batch.n_node[..., None])[:-1]).mean())
         Xs_over_different_steps = Xs_over_different_steps.at[0].set(X_prev)
@@ -328,7 +311,7 @@ class PPO(Base):
 
         
         scan_dict = {"log_policies": log_policies, "Xs_over_different_steps": Xs_over_different_steps, "prob_over_diff_steps": prob_over_diff_steps, "noise_rewards": noise_rewards, "entropy_rewards": entropy_rewards,
-                    "Values_over_diff_steps": Values_over_diff_steps, "rand_node_features_diff_steps":rand_node_features_diff_steps,
+                    "Values_over_diff_steps": Values_over_diff_steps,
                     "step": 0, "node_gr_idx": node_gr_idx, "params": params, "key": key, "X_prev": X_prev, "graphs": graphs, "energy_graph_batch": energy_graph_batch, "T": T}
 
         scan_fn = partial(self.scan_body, deterministic=deterministic)
@@ -339,9 +322,9 @@ class PPO(Base):
         spin_log_probs = out_dict_list["spin_log_probs"][-1]
         spin_logits_next = out_dict_list["spin_logits_next"][-1]
 
-        solution_spins_last_step = (nn.one_hot(graphs["graphs"][0].graph.globals["solution_nodes"], num_classes=graphs["graphs"][0].meta["cabinets"])[:, None, None] * jax.lax.stop_gradient(spin_logits_next)).sum(-1)
-        solution_prob_last_step = jax.ops.segment_sum(solution_spins_last_step, node_gr_idx, graphs["graphs"][0].graph.n_node.shape[0])[:-1]
-        solution_prob_min_factor = jax.ops.segment_min(solution_spins_last_step, node_gr_idx, graphs["graphs"][0].graph.n_node.shape[0])[:-1]
+        solution_prob_mean, solution_prob_min = self._compute_solution_prob_stats(
+            graphs, spin_logits_next, node_gr_idx
+        )
 
         X_next = scan_dict["X_prev"]#
         energy_step, Hb, best_X_0, key, energy_dict = self._get_energy_step(energy_graph_batch, X_next, node_gr_idx, ownership_floor, key)
@@ -359,7 +342,6 @@ class PPO(Base):
         X_0 = X_next
 
         Xs_over_different_steps = scan_dict["Xs_over_different_steps"]
-        rand_node_features_diff_steps = scan_dict["rand_node_features_diff_steps"]
         Values_over_diff_steps = scan_dict["Values_over_diff_steps"]
         log_policies = scan_dict["log_policies"]
         entropy_rewards = scan_dict["entropy_rewards"]
@@ -377,7 +359,7 @@ class PPO(Base):
         reverse_KL = self._reverse_KL_loss_value(log_q_0_T[:,:-1], log_p_0_T[:,:-1])
 
         x_axis = jnp.arange(0, overall_diffusion_steps)
-        log_dict = {"RL": {"states": Xs_over_different_steps[0:-1], "rand_node_features": rand_node_features_diff_steps,
+        log_dict = {"RL": {"states": Xs_over_different_steps[0:-1],
                            "actions": Xs_over_different_steps[1:], "policies": log_policies, "rewards": rewards,
                            "values": Values_over_diff_steps,},
                     "Losses": {"forward_KL": forward_KL, "reverse_KL": reverse_KL, "noise_rewards": jnp.mean(jnp.sum(noise_rewards[0:, :-1], axis=0)),
@@ -385,7 +367,7 @@ class PPO(Base):
                                "neg_entropy_rewards": jnp.mean(jnp.sum(entropy_rewards[0:, :-1], axis=0)),
                                "overall_rewards": jnp.mean(jnp.sum(rewards[0:, :-1], axis=0))},
                     "metrics": {"energies": graph_energies, "entropies": 0., "spin_log_probs": spin_log_probs,
-                                "graph_mean_energies": energy_reward, "free_energies": 0., "solution_prob_mean": solution_prob_last_step.mean(), "solution_prob_min": solution_prob_min_factor.mean()},
+                                "graph_mean_energies": energy_reward, "free_energies": 0., "solution_prob_mean": solution_prob_mean, "solution_prob_min": solution_prob_min},
                     "figures": {"prob_over_diff_steps": {"x_values": x_axis, "y_values": prob_over_diff_steps},
                                 "overall_rewards_over_diff_steps": {"x_values": x_axis,
                                                                     "y_values": jnp.mean(
@@ -406,114 +388,6 @@ class PPO(Base):
                     }
         return log_dict, key
     
-    @partial(jax.jit, static_argnums=(0,8))
-    def _environment_steps_scan_force_samples(self, params, graphs, energy_graph_batch, Xs_over_different_steps, T, ownership_floor, key, mode):
-        ### TDOD cahnge rewards to non exact expectation rewards
-        print("scan function is being jitted")
-        N_basis_states = Xs_over_different_steps.shape[2]
-        deterministic = mode != "train"
-
-        overall_diffusion_steps = self.n_diffusion_steps * self.eval_step_factor
-        X_prev, log_q_T, one_hot_state, log_p_uniform, key = self.model.sample_prior_w_probs(energy_graph_batch,
-                                                                                             N_basis_states,
-                                                                                             key)
-        X_prev = Xs_over_different_steps[0]
-
-        n_graphs = energy_graph_batch.n_node.shape[0]
-
-        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(energy_graph_batch)
-
-        log_policies = jnp.zeros((overall_diffusion_steps, n_graphs, X_prev.shape[1]), dtype=jnp.float32)
-        prob_over_diff_steps = jnp.zeros((overall_diffusion_steps + 1,), dtype=jnp.float32)
-        noise_rewards = jnp.zeros((overall_diffusion_steps , n_graphs, X_prev.shape[1]), dtype=jnp.float32)
-        entropy_rewards = jnp.zeros((overall_diffusion_steps , n_graphs, X_prev.shape[1]), dtype=jnp.float32)
-        Values_over_diff_steps = jnp.zeros((overall_diffusion_steps + 1, n_graphs, X_prev.shape[1]), dtype=jnp.float32)
-        rand_node_features_diff_steps = jnp.zeros(
-            (overall_diffusion_steps, X_prev.shape[0], X_prev.shape[1], self.n_random_node_features), dtype=jnp.float32)
-
-        prob_over_diff_steps = prob_over_diff_steps.at[0].set(jnp.exp((jax.ops.segment_sum((log_p_uniform * one_hot_state).sum(-1), node_gr_idx, n_graphs) / energy_graph_batch.n_node[..., None])[:-1]).mean())
-        Xs_over_different_steps = Xs_over_different_steps.at[0].set(X_prev)
-
-
-        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(energy_graph_batch)
-        scan_dict = {"log_policies": log_policies, "Xs_over_different_steps": Xs_over_different_steps, "prob_over_diff_steps": prob_over_diff_steps, "noise_rewards": noise_rewards, "entropy_rewards": entropy_rewards,
-                    "Values_over_diff_steps": Values_over_diff_steps, "rand_node_features_diff_steps":rand_node_features_diff_steps,
-                    "step": 0, "node_gr_idx": node_gr_idx, "params": params, "key": key, "X_prev": X_prev, "graphs": graphs, "energy_graph_batch": energy_graph_batch, "T": T}
-
-        scan_fn = partial(self.scan_body, force_samples=True, deterministic=deterministic)
-        scan_dict, out_dict_list = jax.lax.scan(scan_fn, scan_dict, None, length = overall_diffusion_steps)
-
-
-        key = scan_dict["key"]
-        spin_log_probs = out_dict_list["spin_log_probs"][-1]
-        spin_logits_next = out_dict_list["spin_logits_next"][-1]
-
-        solution_spins_last_step = (nn.one_hot(graphs["graphs"][0].graph.globals["solution_nodes"], num_classes=graphs["graphs"][0].meta["cabinets"])[:, None, None] * jax.lax.stop_gradient(spin_logits_next)).sum(-1)
-        solution_prob_last_step = jax.ops.segment_sum(solution_spins_last_step, node_gr_idx, graphs["graphs"][0].graph.n_node.shape[0])[:-1]
-        solution_prob_min_factor = jax.ops.segment_min(solution_spins_last_step, node_gr_idx, graphs["graphs"][0].graph.n_node.shape[0])[:-1]
-
-        X_next = scan_dict["X_prev"]#
-        energy_step, Hb, best_X_0, key, energy_dict = self._get_energy_step(energy_graph_batch, X_next, node_gr_idx, ownership_floor, key)
-        energy_reward = -energy_step
-
-        noise_rewards = scan_dict["noise_rewards"]
-        entropy_rewards = scan_dict["entropy_rewards"]
-        combined_reward = self.NoiseDistrClass.calculate_noise_distr_reward(-noise_rewards, entropy_rewards)
-
-        rewards = combined_reward
-        rewards = rewards.at[-1].set(rewards[-1] + energy_reward)
-
-        graph_energies = energy_step[:-1]
-        graph_energies = graph_energies[..., None]
-        X_0 = X_next
-
-        Xs_over_different_steps = scan_dict["Xs_over_different_steps"]
-        rand_node_features_diff_steps = scan_dict["rand_node_features_diff_steps"]
-        Values_over_diff_steps = scan_dict["Values_over_diff_steps"]
-        log_policies = scan_dict["log_policies"]
-        entropy_rewards = scan_dict["entropy_rewards"]
-        prob_over_diff_steps = scan_dict["prob_over_diff_steps"]
-        noise_rewards = scan_dict["noise_rewards"]
-
-        log_q_0_T = jnp.zeros((overall_diffusion_steps+1, n_graphs, X_prev.shape[1]), dtype=jnp.float32)
-        log_p_0_T = jnp.zeros((overall_diffusion_steps+1, n_graphs, X_prev.shape[1]), dtype=jnp.float32)
-        log_q_0_T = log_q_0_T.at[0].set(log_q_T)
-        log_q_0_T = log_q_0_T.at[1:].set(log_policies)
-        log_p_0_T = log_p_0_T.at[:-1].set(-1/(T* 10**-6)*noise_rewards)
-        log_p_0_T = log_p_0_T.at[-1].set(1/(T* 10**-6)*energy_step)
-
-        forward_KL = self._forward_KL_loss_value(log_q_0_T[:,:-1], log_p_0_T[:,:-1])
-        reverse_KL = self._reverse_KL_loss_value(log_q_0_T[:,:-1], log_p_0_T[:,:-1])
-
-        x_axis = jnp.arange(0, overall_diffusion_steps)
-        log_dict = {"RL": {"states": Xs_over_different_steps[0:-1], "rand_node_features": rand_node_features_diff_steps,
-                           "actions": Xs_over_different_steps[1:], "policies": log_policies, "rewards": rewards,
-                           "values": Values_over_diff_steps, "energy_rewards": energy_reward[:-1],},
-                    "Losses": {"forward_KL": forward_KL, "reverse_KL": reverse_KL, "noise_rewards": jnp.mean(jnp.sum(noise_rewards[0:, :-1], axis=0)),
-                               "energy_rewards": jnp.mean(energy_reward[:-1]),
-                               "neg_entropy_rewards": jnp.mean(jnp.sum(entropy_rewards[0:, :-1], axis=0)),
-                               "overall_rewards": jnp.mean(jnp.sum(rewards[0:, :-1], axis=0))},
-                    "metrics": {"energies": graph_energies, "entropies": 0., "spin_log_probs": spin_log_probs,
-                                "graph_mean_energies": energy_reward, "free_energies": 0., "solution_prob_mean": solution_prob_last_step.mean(), "solution_prob_min": solution_prob_min_factor.mean()},
-                    "figures": {"prob_over_diff_steps": {"x_values": x_axis, "y_values": prob_over_diff_steps},
-                                "overall_rewards_over_diff_steps": {"x_values": x_axis,
-                                                                    "y_values": jnp.mean(
-                                                                        jnp.mean(rewards[:, :-1], axis=-1), axis=-1)},
-                                "entropy_rewards": {"x_values": x_axis,
-                                                    "y_values": jnp.mean(jnp.mean(entropy_rewards[:, :-1], axis=-1),
-                                                                         axis=-1)},
-                                "noise_rewards": {"x_values": x_axis,
-                                                  "y_values": jnp.mean(jnp.mean(noise_rewards[:, :-1], axis=-1),
-                                                                       axis=-1)}
-                                },
-                    "energies": {"HA": graph_energies, "Hb": Hb, **energy_dict},
-                    "log_p_0": spin_logits_next,
-                    "X_0": X_0,
-                    "best_X_0": best_X_0,
-                    "bin_sequence": Xs_over_different_steps,
-                    "spin_log_probs": spin_log_probs,
-                    }
-        return log_dict, key
     
     def loss_backward_no_sync(self, params, opt_state, graphs, batch_dict, key):
         def squeeze(x):
@@ -637,7 +511,6 @@ class PPO(Base):
     def PPO_loss(self, params, jraph_graph_list, batch_dict, key):
         Sb_Hb_Nb_A_k = batch_dict["advantages"]
         Sb_Hb_Nb_X_prev = batch_dict["states"]
-        Sb_Hb_Nb_rand_node_features = batch_dict["rand_node_features"]
         Sb_Hb_Nb_X_next = batch_dict["actions"]
 
         Sb_Nb_t_idx_per_node = batch_dict["time_index_per_node"]
@@ -650,7 +523,6 @@ class PPO(Base):
         node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(jraph_graph_list["graphs"][0])
         energy_per_node = self.vmapped_relaxed_energy(jraph_graph_list["graphs"][0], Sb_Hb_Nb_X_prev.swapaxes(0,1).astype(jnp.int32), node_gr_idx)[2]
         out_dict, _ = self.vmapped_calc_log_q(params, jraph_graph_list, Sb_Hb_Nb_X_prev, energy_per_node.T, Sb_Hb_Nb_X_next, Sb_Nb_t_idx_per_node, batched_key)
-        #out_dict, _ = self.vmapped_calc_log_q(params, jraph_graph_list, Sb_Hb_Nb_X_prev, Sb_Hb_Nb_rand_node_features, Sb_Hb_Nb_X_next, Sb_Nb_t_idx_per_node, batched_key)
 
         out_values = out_dict["Values"]
         state_log_probs = out_dict["state_log_probs"]
