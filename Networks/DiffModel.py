@@ -117,9 +117,9 @@ class DiffModel(nn.Module):
 
 
 	@partial(flax.linen.jit, static_argnums=(0,), static_argnames=("deterministic",))
-	def __call__(self, jraph_graph_list, X_prev, energy_per_node, t_idx_per_node, key, *, deterministic: bool = True, pred_type: int = 0):
+	def __call__(self, graph_batch, X_prev, energy_per_node, t_idx_per_node, key, *, deterministic: bool = True, pred_type: int = 0):
 		X_prev = X_prev.astype(jnp.int32)
-		X_prev_emb, node_types_emb, nth_of_type_emb, key = self.embed_nodes(X_prev, energy_per_node, t_idx_per_node, jraph_graph_list["graphs"][0], key)
+		X_prev_emb, node_types_emb, nth_of_type_emb, key = self.embed_nodes(X_prev, energy_per_node, t_idx_per_node, graph_batch, key)
 		X_prev_emb = jnp.concatenate([X_prev_emb], axis = -1)
 
 		#pred_type_emb = self.pred_type_emb(jnp.full(X_prev.shape[0], pred_type, dtype=jnp.int32))
@@ -137,12 +137,12 @@ class DiffModel(nn.Module):
 		embeddings = jnp.concat([embeddings, node_types_emb, nth_of_type_emb], axis = -1)
 
 		queries = self.W_q(embeddings)
-		keys = self.W_k(embeddings)[jraph_graph_list["graphs"][0].globals["neighbours_per_node"]]
+		keys = self.W_k(embeddings)[graph_batch.globals["neighbours_per_node"]]
 
 
 		scores = jnp.einsum('nd,ncd->nc', queries, keys) / jnp.sqrt(queries.shape[-1]) #score_embeddings
 
-		mask = self.get_mask(jraph_graph_list["graphs"][0])
+		mask = self.get_mask(graph_batch)
 		mask_bool = mask.astype(bool)
 		neg_inf = jnp.array(jnp.finfo(scores.dtype).min, dtype=scores.dtype)
 		masked_scores = jnp.where(mask_bool, scores, neg_inf)
@@ -153,21 +153,21 @@ class DiffModel(nn.Module):
 		spin_logits = jnp.where(all_masked, neg_inf, spin_logits)[:, None]
 
 		#fix ownership logits constant
-		start_ownerships = jraph_graph_list["graphs"][0].meta["offset_things_persons"]
-		end_ownerships = start_ownerships + jraph_graph_list["graphs"][0].meta["things"]
+		start_ownerships = graph_batch.meta["offset_things_persons"]
+		end_ownerships = start_ownerships + graph_batch.meta["things"]
 		spin_logits = spin_logits.at[start_ownerships:end_ownerships].set(neg_inf)
 		rows = jnp.arange(start_ownerships, end_ownerships)
 		cols = X_prev[start_ownerships:end_ownerships, 0].astype(jnp.int32)
 		spin_logits = spin_logits.at[rows, 0, cols].set(0.0)
 
-		node_graph_idx, n_graph, n_node = self.get_graph_info(jraph_graph_list)
+		node_graph_idx, n_graph, n_node = self.get_graph_info(graph_batch)
 
 		
 		
 		if self.value_pooling == "neighbor_attention":
 			attn_weights = jnp.exp(spin_logits[:, 0, :])
 			attn_weights = attn_weights / jnp.clip(jnp.sum(attn_weights, axis=-1, keepdims=True), a_min=1e-9)
-			value_values = self.W_v(embeddings)[jraph_graph_list["graphs"][0].globals["neighbours_per_node"]]
+			value_values = self.W_v(embeddings)[graph_batch.globals["neighbours_per_node"]]
 			attn_out = jnp.einsum('nc,ncd->nd', attn_weights, value_values)
 			value_emb = global_graph_aggr(attn_out[:, None], node_graph_idx, n_graph) / jnp.sqrt(n_node[..., None, None])
 		elif self.value_pooling == "node_sum":
@@ -193,8 +193,8 @@ class DiffModel(nn.Module):
 		return out_dict, key
 
 	#@partial(flax.linen.jit, static_argnums=0)
-	def get_graph_info(self, jraph_graph_list):
-		first_graph = jraph_graph_list["graphs"][0]
+	def get_graph_info(self, graph_batch):
+		first_graph = graph_batch
 		nodes = first_graph.nodes
 		n_node = first_graph.n_node
 		n_graph = jax.tree_util.tree_leaves(n_node)[0].shape[0]
@@ -273,7 +273,7 @@ class DiffModel(nn.Module):
 		return X_input, node_types_emb, nth_of_type_emb, key
 
 	@partial(flax.linen.jit, static_argnums=0, static_argnames=("deterministic",))
-	def make_one_step(self,params ,jraph_graph_list, X_prev, energy_per_node, t_idx_per_node, key, deterministic: bool = True, step: int = 0):
+	def make_one_step(self,params ,graph_batch, X_prev, energy_per_node, t_idx_per_node, key, deterministic: bool = True, step: int = 0):
 		rand_nodes, key = self.reinit_rand_nodes(X_prev, key)
 
 		rngs = None
@@ -281,10 +281,10 @@ class DiffModel(nn.Module):
 			key, dropout_key = jax.random.split(key)
 			rngs = {"dropout": dropout_key}
 		
-		node_graph_idx, n_graph, n_node = self.get_graph_info(jraph_graph_list)
+		node_graph_idx, n_graph, n_node = self.get_graph_info(graph_batch)
 
-		out_dict, key = self.apply(params, jraph_graph_list, X_prev, energy_per_node, t_idx_per_node, key, deterministic=deterministic, rngs=rngs)
-		X_next, spin_log_probs, key = self.sample_from_model(out_dict["spin_logits"], jraph_graph_list, key)
+		out_dict, key = self.apply(params, graph_batch, X_prev, energy_per_node, t_idx_per_node, key, deterministic=deterministic, rngs=rngs)
+		X_next, spin_log_probs, key = self.sample_from_model(out_dict["spin_logits"], graph_batch, key)
 
 		graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(spin_log_probs[...,0], node_graph_idx, n_graph)/(n_node))[:-1]))
 		out_dict["X_next"] = X_next
@@ -295,12 +295,12 @@ class DiffModel(nn.Module):
 	
 	
 	@partial(flax.linen.jit, static_argnums=0)
-	def unbiased_last_step(self,params ,jraph_graph_list, X_prev, t_idx, key, eps = 0.01):
+	def unbiased_last_step(self,params ,graph_batch, X_prev, t_idx, key, eps = 0.01):
 		rand_nodes, key = self.reinit_rand_nodes(X_prev, key)
-		out_dict, key = self.apply(params, jraph_graph_list, rand_nodes, X_prev, t_idx, key)
+		out_dict, key = self.apply(params, graph_batch, rand_nodes, X_prev, t_idx, key)
 
 		spin_logits = out_dict["spin_logits"]
-		j_graphs = jraph_graph_list["graphs"][0]
+		j_graphs = graph_batch
 		key, subkey = jax.random.split(key)
 
 		sampled_p = jax.random.uniform(key, shape =  (j_graphs.n_node.shape[0],))
@@ -311,7 +311,7 @@ class DiffModel(nn.Module):
 		graph_sampled_p = jnp.repeat(sampled_p, n_node, axis=0, total_repeat_length=total_nodes)
 		graph_sampled_p = graph_sampled_p[:, None]
 
-		X_next_model, spin_log_probs_model, key = self.sample_from_model(spin_logits, key)
+		X_next_model, spin_log_probs_model, key = self.sample_from_model(spin_logits, graph_batch, key)
 		X_next_uniform, one_hot_state, log_p_uniform_density, key = self.sample_prior(j_graphs, spin_logits.shape[1],  key)
 		X_next_uniform = X_next_uniform[...,0]
 		log_p_uniform = jnp.sum(log_p_uniform_density * one_hot_state, axis=-1)[...,0]
@@ -322,13 +322,13 @@ class DiffModel(nn.Module):
 		weights =  jnp.concatenate([(1-eps)*jnp.ones_like(spin_log_probs_model)[None,...], eps*jnp.ones_like(spin_log_probs_model)[None, ...]], axis = 0)
 		spin_log_probs = jax.scipy.special.logsumexp(concat_spin_log_probs, axis = 0, b = weights)
 
-		node_graph_idx, n_graph, n_node = self.get_graph_info(jraph_graph_list)
+		node_graph_idx, n_graph, n_node = self.get_graph_info(graph_batch)
 
 		graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(jnp.sum(spin_log_probs, axis = -1), node_graph_idx, n_graph)/(n_node))[:-1]))
 		return X_next, spin_log_probs, spin_logits, graph_log_prob, key
 
 	@partial(flax.linen.jit, static_argnums=0)
-	def sample_from_model(self, spin_logits, jraph_graph_list, key):
+	def sample_from_model(self, spin_logits, graph_batch, key):
 		key, subkey = jax.random.split(key)
 		X_next = jax.random.categorical(key=subkey,
 											   logits=spin_logits,
@@ -336,7 +336,7 @@ class DiffModel(nn.Module):
 											   shape=spin_logits.shape[:-1])
 
 
-		one_hot_state = jax.nn.one_hot(X_next, num_classes=jraph_graph_list["graphs"][0].meta["cabinets"])
+		one_hot_state = jax.nn.one_hot(X_next, num_classes=graph_batch.meta["cabinets"])
 
 		spin_log_probs = jnp.sum(spin_logits * one_hot_state, axis=-1)
 
@@ -345,11 +345,11 @@ class DiffModel(nn.Module):
 
 	
 	@partial(flax.linen.jit, static_argnums=0)
-	def calc_log_q(self, params, jraph_graph_list, X_prev, energy_per_node, X_next, t_idx_per_node, key):
-		out_dict, key = self.apply(params, jraph_graph_list, X_prev, energy_per_node, t_idx_per_node, key)
+	def calc_log_q(self, params, graph_batch, X_prev, energy_per_node, X_next, t_idx_per_node, key):
+		out_dict, key = self.apply(params, graph_batch, X_prev, energy_per_node, t_idx_per_node, key)
 
 		spin_logits = out_dict["spin_logits"]
-		node_graph_idx, n_graph, n_node = self.get_graph_info(jraph_graph_list)
+		node_graph_idx, n_graph, n_node = self.get_graph_info(graph_batch)
 
 		one_hot_state = jax.nn.one_hot(X_next, num_classes=self.n_bernoulli_features)
 		#X_next = jnp.expand_dims(X_next, axis = -1)

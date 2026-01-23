@@ -126,7 +126,7 @@ def meanfield_run():
                                "AnnealSchedule": args.AnnealSchedule, "use_sample": args.use_sample, "jit": args.jit, "dataset_name": "HCP_dummy", "problem_name": "HCP", "edge_updates": True, 
                                "N_anneal": args.N_anneal[0], "load_wandb_id": args.load_wandb_id, "n_diffusion_steps": args.n_diffusion_steps[0], "minib_diff_steps": args.minib_diff_steps, 
                                "minib_basis_states": args.minib_basis_states, "N_basis_states": args.n_basis_states[0], "train_mode": args.train_mode, "T_max": args.temps[0], 
-                               "T_target": args.T_target, "embedding_dim": args.embedding_dim, "lr": args.lrs[0], "min_lr": args.lrs[0] / 10}, overwrite = True) # "load_wandb_id": "oz5t74ww"
+                               "T_target": args.T_target, "embedding_dim": args.embedding_dim, "lr": args.lrs[0], "min_lr": args.lrs[0] / 5}, overwrite = True) # "load_wandb_id": "oz5t74ww"
     else:
         detect_and_run_for_loops()
     

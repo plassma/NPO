@@ -38,7 +38,6 @@ parser.add_argument('--inner_loop_steps', default=1, type = int, help='number of
 parser.add_argument('--project_name', default= "", type = str, help='define project name')
 parser.add_argument('--beta_factor', default=[1.], type = float, help='desfine noise strength', nargs = "+")
 parser.add_argument('--loss_alpha', default=0.0, type = float, help='rel weighteing between forward and reverse KL')
-parser.add_argument('--MCMC_steps', default=0, type = int, help='number of MCMC steps')
 parser.add_argument('--mov_average', default=0.0009, type = float, help='moving_average for RL')
 parser.add_argument('--TD_k', default=3, type = float, help='TD_k for PPO')
 parser.add_argument('--clip_value', default=0.2, type = float, help='clip_value for PPO/GRPO')
@@ -168,7 +167,6 @@ def run( flexible_config, overwrite = True):
         "messeage_concat": False,
         "graph_mode": "normal",
         "loss_alpha": 0.0,
-        "MCMC_steps": 0,
         "train_mode": "PPO",
         "inner_loop_steps": 2,
         "minib_diff_steps": 3,
@@ -231,19 +229,19 @@ def plot_time_progression(log_dict, select_sample=0):
 
     graph_batch = log_dict["graph_batch"]
 
-    node_gr_idx = jnp.repeat(jnp.arange(graph_batch["graphs"][0].graph.n_node.shape[1]), graph_batch["graphs"][0].graph.n_node[0], axis=0, total_repeat_length=graph_batch["graphs"][0].graph.n_node.sum())
+    node_gr_idx = jnp.repeat(jnp.arange(graph_batch.graph.n_node.shape[1]), graph_batch.graph.n_node[0], axis=0, total_repeat_length=graph_batch.graph.n_node.sum())
 
     for t in range(T):
         sample = time_progression[t, :, select_sample].astype(int)
 
         graph_batch = log_dict["graph_batch"]
 
-        _, e_dict, _ = HCPEnergyClass.calculate_Energy(None, graph_batch["graphs"][0], sample, node_gr_idx)
+        _, e_dict, _ = HCPEnergyClass.calculate_Energy(None, graph_batch, sample, node_gr_idx)
 
         cleaned = {k: v[0].item() for k, v in e_dict.items()}
         total = sum(cleaned.values())
         print(f"sample {T-t-1}: {total}({cleaned})")
-        plot(None, graph_batch["graphs"][0].graph.globals["node_types"].squeeze(),f"energy_time_progression_{t}.png", solution_nodes=log_dict["X_0"][0, :, 0, 0], meta_graph=graph_batch["graphs"][0])
+        plot(None, graph_batch.graph.globals["node_types"].squeeze(),f"energy_time_progression_{t}.png", solution_nodes=log_dict["X_0"][0, :, 0, 0], meta_graph=graph_batch)
 
 
 def plot_samples(log_dict):
@@ -255,7 +253,7 @@ def plot_samples(log_dict):
 
         graph_batch = log_dict["graph_batch"]
 
-        plot(None, graph_batch["graphs"][0].graph.globals["node_types"].squeeze(),f"plots/plot_full_{i}.png", solution_nodes=log_dict["X_0"][0, :, i, 0], meta_graph=graph_batch["graphs"][0])
+        plot(None, graph_batch.graph.globals["node_types"].squeeze(),f"plots/plot_full_{i}.png", solution_nodes=log_dict["X_0"][0, :, i, 0], meta_graph=graph_batch)
 
 if __name__ == "__main__":
     meanfield_run()

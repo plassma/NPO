@@ -9,6 +9,7 @@ rm -rf "$ROOT/htmlcov"
 
 # 1) dataset creator run from repo root so module imports resolve consistently
 coverage run --parallel-mode --source="$ROOT" -m DatasetCreator.prepare_datasets --dataset HCP_dummy --problem HCP
+rm -rf ./loadGraphDatasets
 
 # 2) main run from repo root
 cd "$ROOT"

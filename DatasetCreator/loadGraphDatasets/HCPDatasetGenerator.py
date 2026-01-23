@@ -226,6 +226,8 @@ def plot(igraph, node_types, target, include_legend=False, bin_solution_edge=Non
 
 		mapped_edges = []
 		for u, v in edges:
+			u = int(np.asarray(u))
+			v = int(np.asarray(v))
 			u = ownership_to_thing.get(u, u)
 			v = ownership_to_thing.get(v, v)
 			mapped_edges.append((u, v))
@@ -512,7 +514,6 @@ class HCPDatasetGenerator(BaseDatasetGenerator):
 			"densities": [],
 			"runtimes": [],
 			"upperBoundEnergies": [],
-			"compl_H_graphs": [],
 		}
 		edges, nodes = 0, 0
 		for idx, problem in enumerate(DUMMY_SAMPLES):
@@ -527,9 +528,10 @@ class HCPDatasetGenerator(BaseDatasetGenerator):
 			H_graph, density, graph_size = self.igraph_to_jraph(g)
 			H_graph = H_graph._replace(globals=globals)
 
-
-			#Energy, boundEnergy, solution, runtime, H_graph_compl = self.solve_graph(H_graph, g)
-			Energy, boundEnergy, solution, runtime, compl_H_graph = self.solve_graph(H_graph,g)
+			Energy = 0.0
+			boundEnergy = 0.0
+			solution = bin_solution
+			runtime = None
 
 			#H_graph = GraphWithMeta(graph=H_graph, meta={"rooms": problem.rooms, "cabinets": problem.cabinets, "things": problem.things, "persons": problem.persons, "id": idx,
 		#										"offset_rooms": problem.OFFSET_ROOMS, "offset_cabinets": problem.OFFSET_CABINETS, "offset_things": problem.OFFSET_THINGS_CABINETS, "offset_persons": problem.OFFSET_THINGS_PERSONS})
@@ -544,7 +546,6 @@ class HCPDatasetGenerator(BaseDatasetGenerator):
 			solutions["densities"].append(density)
 			solutions["runtimes"].append(runtime)
 			solutions["upperBoundEnergies"].append(boundEnergy + 0.0001)
-			solutions["compl_H_graphs"].append(compl_H_graph)
 
 			indexed_solution_dict = {}
 			for key in solutions.keys():

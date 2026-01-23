@@ -1,9 +1,7 @@
 import sys
 sys.path.append("..")
-import warnings
 from abc import ABC, abstractmethod
 import os
-import socket
 import jraph
 import pickle
 import numpy as np
@@ -27,8 +25,7 @@ class BaseDatasetGenerator(ABC):
 				seed: (int) seed for random number generator,
 				parent: (bool) whether to use parent directory,
 				diff_ps: (bool) whether to use different p values,
-				gurobi_solve: (bool) whether to solve instances with gurobi or not,
-				time_limit: (float) gurobi time limit for solving the problem,
+				time_limit: (float) time limit for solving the problem (if applicable),
 				n_graphs: (int) number of graphs to generate,
 			}
 		"""
@@ -41,10 +38,7 @@ class BaseDatasetGenerator(ABC):
 		self.problem = config["problem"]
 		self.diff_ps = config["diff_ps"]
 		# self.IsingFormulation = config["IsingFormulation"]
-		self.gurobi_solve = config["gurobi_solve"]
-		self.licence_base_path = config["licence_base_path"]
-		self.time_limit = config["time_limit"]
-		self.thread_fraction = config["thread_fraction"]
+		self.time_limit = config.get("time_limit")
 
 		# set path
 		p = Path(os.getcwd())
@@ -62,28 +56,12 @@ class BaseDatasetGenerator(ABC):
 			seed_int = 0
 		np.random.seed(self.seed + seed_int)
 
-		# set gurobi licence
-		if self.gurobi_solve:
-			hostname = socket.gethostname()
-			device_licence_path = os.path.join(self.licence_base_path, f"gurobi_{hostname}.lic")
-			if os.path.exists(device_licence_path):
-				os.environ["GRB_LICENSE_FILE"] = device_licence_path
-			else:
-				gurobi_licence_path = os.path.join(self.licence_base_path, "gurobi.lic")
-				if os.path.exists(gurobi_licence_path):
-					os.environ["GRB_LICENSE_FILE"] = gurobi_licence_path
-				else:
-					warnings.warn("No gurobi licence has been found in the given base path. Gurobi will not be used to solve the dataset!")
-					self.gurobi_solve = False
-		else:
-			warnings.warn("Gurobi will not be used to solve the dataset which might lead to wrong solutions for the dataset!")
-
 	@abstractmethod
 	def generate_dataset(self):
 		"""
 		Generate the graph instances for the dataset
 
-		- use self.solve_graph(H_graph) to solve the graph instance
+		- optionally override self.solve_graph(H_graph) if a solver is available
 		- use self.save_instance_solution(indexed_solution_dict, idx) to save the graph instance
 		- use self.save_solutions(solutions) to save the solutions
 		"""
@@ -91,14 +69,14 @@ class BaseDatasetGenerator(ABC):
 
 	def solve_graph(self, H_graph, g) -> (float, float, list, float, jraph.GraphsTuple):
 		"""
-		Solve the graph instance for the dataset using gurobi if self.gurobi_solve is True, otherwise return None Tuple
+		Optional solver hook. Subclasses can override to provide exact/heuristic solutions.
 
 		:param H_graph: jraph graph instance
 		:param g: igraph graph instance
 		:return: (Energy, boundEnergy, solution, runtime, H_graph_compl)
 		"""
 		
-		# in case gurobi is not used, arbitrary values are returned and for MaxCl, the complement graph is returned
+		# Default to placeholder values when no solver is provided.
 		Energy = 0.
 		boundEnergy = 0.
 		solution = np.ones_like(H_graph.nodes)

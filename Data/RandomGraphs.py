@@ -1,14 +1,9 @@
-import jax.numpy as jnp
 import numpy as np
 import jraph
 import igraph as ig
 import random
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-import os
-import pickle
-
-from Solvers.GurobiSolver import solve_iGraph
 
 
 class ErdosRenyiGraphs:
@@ -138,9 +133,9 @@ class ErdosRenyiGraphDataset(Dataset):
         for i in range(self.testset_size):
             seed = self.seed + i
             i_graph, edges = self.__generate_random_graph(seed=seed)
-            _, energy, bin_solution, _ = solve_iGraph(i_graph=i_graph)
-            spin_solution = bin_solution * 2 - 1
             random_bin_state = np.random.randint(0, 2, size=self.N_spins)
+            energy = 0.0
+            spin_solution = random_bin_state * 2 - 1
             gt_energies.append(energy)
             gt_spin_states.append(spin_solution)
             gt_jraph_graphs.append(self.__return_jraph(i_graph, edges, random_bin_state))

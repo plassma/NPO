@@ -41,7 +41,7 @@ class GRPO(PPO):
         return (loss, (log_dict, key)), params, opt_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def PPO_loss(self, params, jraph_graph_list, batch_dict, key):
+    def PPO_loss(self, params, graph_batch, batch_dict, key):
         Sb_Hb_Nb_A_k = batch_dict["advantages"]
         Sb_Hb_Nb_X_prev = batch_dict["states"]
         Sb_Hb_Nb_X_next = batch_dict["actions"]
@@ -52,15 +52,15 @@ class GRPO(PPO):
         key, subkey = jax.random.split(key)
         batched_key = jax.random.split(subkey, num=Sb_Hb_Nb_A_k.shape[0])
 
-        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(jraph_graph_list["graphs"][0])
+        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(graph_batch)
         energy_per_node = self.vmapped_relaxed_energy(
-            jraph_graph_list["graphs"][0],
+            graph_batch,
             Sb_Hb_Nb_X_prev.swapaxes(0, 1).astype(jnp.int32),
             node_gr_idx,
         )[2]
         out_dict, _ = self.vmapped_calc_log_q(
             params,
-            jraph_graph_list,
+            graph_batch,
             Sb_Hb_Nb_X_prev,
             energy_per_node.T,
             Sb_Hb_Nb_X_next,

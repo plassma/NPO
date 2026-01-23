@@ -100,7 +100,6 @@ class TrainMeanField:
 		self.N_anneal = self.config["N_anneal"]
 		self.N_equil = self.config["N_equil"]
 		self.loss_alpha = self.config["loss_alpha"]
-		self.MCMC_steps = self.config["MCMC_steps"]
 
 		self.n_diffusion_steps = self.config["n_diffusion_steps"]
 		self.mode = self.config["mode"]
@@ -476,15 +475,15 @@ class TrainMeanField:
 			self.params = jax.tree_util.tree_map(lambda x: x[0], self.params)
 		elif(self.graph_mode != "U_net"):
 
-			input_graph_list, energy_graphs = self._prepare_graphs(jraph_graph_dict, mode = "val")
+			graph_batch = self._prepare_graphs(jraph_graph_dict)
 
-			batched_graph = input_graph_list["graphs"][0]
+			batched_graph = graph_batch
 			X_prev = jnp.ones((batched_graph.nodes.shape[1], 1))
 			energy_per_node_dim = jnp.ones((batched_graph.nodes.shape[1], self.energy_per_node_dim))
 
-			input_graph_list = {"graphs": [jax.tree_util.tree_map(lambda x: x[0], input_graph_list["graphs"][0])]}
+			graph_device = jax.tree_util.tree_map(lambda x: x[0], graph_batch)
 			t_idx_per_node = jnp.ones((batched_graph.nodes.shape[1],1))
-			self.params = self.model.init({"params": subkey}, input_graph_list, X_prev, energy_per_node_dim, t_idx_per_node, subkey)
+			self.params = self.model.init({"params": subkey}, graph_device, X_prev, energy_per_node_dim, t_idx_per_node, subkey)
 		elif(self.graph_mode == "U_net"):
 			reps = 10
 			iters = len(self.dataloader_train)*reps
@@ -492,7 +491,7 @@ class TrainMeanField:
 			U_net_graph_dict = jax.tree_util.tree_map(lambda x: jnp.array(x), U_net_graph_dict)
 			print(jax.tree_util.tree_map(lambda x: x.shape, U_net_graph_dict))
 
-			input_graph_list, energy_graphs = self._prepare_graphs(jraph_graph_dict)
+			_ = self._prepare_graphs(jraph_graph_dict)
 
 			X_prev = jnp.ones((U_net_graph_dict["graphs"][0].nodes.shape[0], 1))
 			rand_node_features = jnp.ones((U_net_graph_dict["graphs"][0].nodes.shape[0], self.energy_per_node_dim))
@@ -607,14 +606,15 @@ class TrainMeanField:
 	def train_step(self, batch_dict):
 		### TODO add code that switches of the buffer
 		step1 = time.time()
-		graph_batch, energy_graph_batch = self._prepare_graphs(batch_dict, mode = "train")
+		graph_batch = self._prepare_graphs(batch_dict)
 		step2 = time.time()
 		batching_time = step2 - step1
 
-		self.params, self.opt_state, loss, (log_dict, energy_graph_batch, self.key) = self.TrainerClass.train_step(self.params, self.opt_state, graph_batch,
-																							  energy_graph_batch, self.T, self.key)
+		self.params, self.opt_state, loss, (log_dict, graph_batch, self.key) = self.TrainerClass.train_step(
+			self.params, self.opt_state, graph_batch, self.T, self.key
+		)
 
-		return loss, (log_dict, energy_graph_batch, batching_time)
+		return loss, (log_dict, graph_batch, batching_time)
 
 	def train(self, max_epochs=None, max_batches=None, eval_every=100, return_metrics=False):
 
@@ -649,7 +649,6 @@ class TrainMeanField:
 			if skip_epoch:
 				continue
 
-			### TODO move code that updates MCMC buffer to this palce and update the MCMC buffer for a larger batchsize
 			step4 = time.time()
 			wandb_log_dict = {}
 			epoch_time_dict = {}
@@ -665,12 +664,12 @@ class TrainMeanField:
 				print("batchsize is", len(gt_normed_energies))
 
 				step1 = time.time()
-				loss, (log_dict, energy_graph_batch, batching_time) = self.train_step(batch_dict)
+				loss, (log_dict, graph_batch, batching_time) = self.train_step(batch_dict)
 				step3 = time.time()
 
 				if("metrics" in log_dict.keys()):
 					log_dict_metrics = jax.tree_util.tree_map(reshape_utils.unravel_dict, log_dict["metrics"])
-					batch_log_dict = self.__calculate_reporting(energy_graph_batch.graph,
+					batch_log_dict = self.__calculate_reporting(graph_batch.graph,
 						log_dict_metrics["energies"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"])
 					batch_log_dict["solution_prob_mean"] = log_dict_metrics["solution_prob_mean"]
 					batch_log_dict["solution_prob_min"] = log_dict_metrics["solution_prob_min"]
@@ -777,12 +776,12 @@ class TrainMeanField:
 		self.TrainerClass.N_test_basis_states = N
 		best_so_far = np.inf
 		for iter, (batch_dict) in enumerate(dataloader):
-			graph_batch, energy_graph_batch = self._prepare_graphs(batch_dict, mode = "eval")
+			graph_batch = self._prepare_graphs(batch_dict)
 
 			self.key, subkey = jax.random.split(self.key)
 			batched_key = jax.random.split(subkey, num = len(jax.devices()))
 
-			loss, (log_dict, _) = self.TrainerClass.pmap_sample(self.params, graph_batch, energy_graph_batch, self.T, batched_key)
+			loss, (log_dict, _) = self.TrainerClass.pmap_sample(self.params, graph_batch, self.T, batched_key)
 
 			vals = log_dict["X_0"][0, :, :, 0]
 			log_dict["graph_batch"] = graph_batch
@@ -808,16 +807,18 @@ class TrainMeanField:
 			gt_normed_energies = batch_dict["energies"]
 			print("batchsize is", len(gt_normed_energies))
 
-			graph_batch, energy_graph_batch = self._prepare_graphs(batch_dict, mode = mode)
+			graph_batch = self._prepare_graphs(batch_dict)
 
 			self.key, subkey = jax.random.split(self.key)
 			batched_key = jax.random.split(subkey, num = len(jax.devices()))
 
-			loss, (log_dict, _) = self.TrainerClass.evaluation_step(self.params, graph_batch, energy_graph_batch, self.T, batched_key, mode = mode, epoch = epoch, epochs = self.epochs)
+			loss, (log_dict, _) = self.TrainerClass.evaluation_step(
+				self.params, graph_batch, self.T, batched_key, mode = mode, epoch = epoch, epochs = self.epochs
+			)
 
 			if self.use_wandb:
 				with tempfile.NamedTemporaryFile(suffix=".png") as target:
-					plot(None, graph_batch["graphs"][0].graph.globals["node_types"][0, :-1],target.name, solution_nodes=log_dict["X_0"][0, :-1, 0, 0], meta_graph=graph_batch["graphs"][0])
+					plot(None, graph_batch.graph.globals["node_types"][0, :-1],target.name, solution_nodes=log_dict["X_0"][0, :-1, 0, 0], meta_graph=graph_batch)
 					wandb.log({"random sample": wandb.Image(target.name)}, commit=False, step=epoch)
 
 
@@ -832,7 +833,7 @@ class TrainMeanField:
 
 			energy_dict = {f"energies/{key}": log_dict["energies"][key] for key in log_dict["energies"]}
 
-			batch_log_dict = self.__calculate_reporting(energy_graph_batch.graph,
+			batch_log_dict = self.__calculate_reporting(graph_batch.graph,
 				log_dict_metrics["energies"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"])
 			batch_log_dict["solution_prob_mean"] = log_dict_metrics["solution_prob_mean"]
 			batch_log_dict["solution_prob_min"] = log_dict_metrics["solution_prob_min"]
@@ -924,12 +925,12 @@ class TrainMeanField:
 			gt_normed_energies = batch_dict["energies"]
 			print("batchsize is", len(gt_normed_energies))
 
-			graph_batch, energy_graph_batch = self._prepare_graphs(batch_dict, mode = mode)
+			graph_batch = self._prepare_graphs(batch_dict)
 
 			self.key, subkey = jax.random.split(self.key)
 			batched_key = jax.random.split(subkey, num = len(jax.devices()))
 
-			loss, (log_dict, _) = self.TrainerClass.evaluation_step(self.params, graph_batch, energy_graph_batch, self.T, batched_key, mode = mode)
+			loss, (log_dict, _) = self.TrainerClass.evaluation_step(self.params, graph_batch, self.T, batched_key, mode = mode)
 
 			time_dict["forward_pass"].append(log_dict["time"]["forward_pass"])
 			time_dict["CE"].append(log_dict["time"]["CE"])
@@ -947,10 +948,10 @@ class TrainMeanField:
 			### TODO fix this logging so that batchsize does not have an effect anymore
 			energy_dict = {f"energies/{key}": log_dict["energies"][key] for key in log_dict["energies"]}
 
-			batch_log_dict = self.__calculate_reporting(energy_graph_batch.graph,
+			batch_log_dict = self.__calculate_reporting(graph_batch.graph,
 				log_dict_metrics["energies"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"])
 
-			batch_CE_log_dict = self.__calculate_reporting(energy_graph_batch.graph,
+			batch_CE_log_dict = self.__calculate_reporting(graph_batch.graph,
 				log_dict_metrics["energies_CE"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"], prefix= "CE")
 
 			energy_mat_list.append(log_dict_metrics["energies_CE"])
@@ -1004,88 +1005,9 @@ class TrainMeanField:
 		return eval_log_dict
 
 
-	def _prepare_graphs(self, batch_dict,  mode = "train"):
-		if(self.graph_mode != "Transformer"):
-			if(self.graph_mode == "U_net"):
-				input_graph_dict = pmap_batch_U_net_graph_dict_and_pad(batch_dict["U_net_graph_dict"], k = self.pad_k)
-				_, energy_graph = self._pad_graphs(batch_dict["input_graph"], batch_dict["energy_graph"])
-				#self.pad_k = 1.3
-			elif(self.graph_mode != "U_net"):
+	def _prepare_graphs(self, batch_dict):
+		return jraph_utils.pmap_graph_list_better(batch_dict["input_graph"])
 
-				input_graph, energy_graph = self._pad_graphs(batch_dict["input_graph"], batch_dict["energy_graph"], mode = mode)
-
-				input_graph_dict = {"graphs": [input_graph]}
-		elif(self.graph_mode == "Transformer"):
-			input_graph, energy_graph = self._pad_graphs(batch_dict["input_graph"], batch_dict["energy_graph"])
-
-			# X_pos_encoding = self._add_node_encoding(input_graph)
-			# input_graph = input_graph._replace(nodes = X_pos_encoding)
-			input_graph_dict = {"graphs": [input_graph]}
-
-		return input_graph_dict, energy_graph
-
-	def _pad_graphs(self, input_graph, energy_graph, mode = "train"):
-		if(self.graph_mode != "Transformer"):
-			if (True):
-				#input_graph = pad_graph_to_nearest_power_of_k(input_graph, k=self.pad_k)
-				#energy_graph = pad_graph_to_nearest_power_of_k(energy_graph, k=self.pad_k)
-				if (mode == "train"):
-					dataset_statistics_dict_input = {"grid_num": self.grid_num,  "edge_grid_factor": self.edge_grid_factor,
-											   "min_nodes": self.dataloader_train.smallest_n_nodes_input_graph,
-											   "min_edges": self.dataloader_train.smallest_n_edges_input_graph,
-												 "max_nodes": self.dataloader_train.largest_n_nodes_input_graph,
-												 "max_edges": self.dataloader_train.largest_n_edges_input_graph
-													 }
-					dataset_statistics_dict_energy = {"grid_num": self.grid_num,  "edge_grid_factor": self.edge_grid_factor,
-											   "min_nodes": self.dataloader_train.smallest_n_nodes_energy_graph,
-											   "min_edges": self.dataloader_train.smallest_n_edges_energy_graph,
-											  "max_nodes": self.dataloader_train.largest_n_nodes_energy_graph,
-											  "max_edges": self.dataloader_train.largest_n_edges_energy_graph
-													  }
-				elif (mode == "eval" or mode == "val"):
-					dataset_statistics_dict_input = {"grid_num": self.grid_num,  "edge_grid_factor": self.edge_grid_factor,
-											   "min_nodes": self.dataloader_val.smallest_n_nodes_input_graph,
-											   "min_edges": self.dataloader_val.smallest_n_edges_input_graph,
-											 "max_nodes": self.dataloader_val.largest_n_nodes_input_graph,
-											 "max_edges": self.dataloader_val.largest_n_edges_input_graph
-													 }
-					dataset_statistics_dict_energy = {"grid_num": self.grid_num,  "edge_grid_factor": self.edge_grid_factor,
-											   "min_nodes": self.dataloader_val.smallest_n_nodes_energy_graph,
-											   "min_edges": self.dataloader_val.smallest_n_edges_energy_graph,
-											  "max_nodes": self.dataloader_val.largest_n_nodes_energy_graph,
-											  "max_edges": self.dataloader_val.largest_n_edges_energy_graph
-													  }
-				else:
-					dataset_statistics_dict_input = {"grid_num": self.grid_num,  "edge_grid_factor": self.edge_grid_factor,
-											   "min_nodes": self.dataloader_test.smallest_n_nodes_input_graph,
-											   "min_edges": self.dataloader_test.smallest_n_edges_input_graph,
-													 "max_nodes": self.dataloader_test.largest_n_nodes_input_graph,
-													 "max_edges": self.dataloader_test.largest_n_edges_input_graph
-													 }
-					dataset_statistics_dict_energy = {"grid_num": self.grid_num,  "edge_grid_factor": self.edge_grid_factor,
-											   "min_nodes": self.dataloader_test.smallest_n_nodes_energy_graph,
-											   "min_edges": self.dataloader_test.smallest_n_edges_energy_graph,
-													  "max_nodes": self.dataloader_test.largest_n_nodes_energy_graph,
-													  "max_edges": self.dataloader_test.largest_n_edges_energy_graph
-													  }
-
-				input_graph = jraph_utils.pmap_graph_list_better(input_graph, dataset_statistics_dict_input)
-				energy_graph = jraph_utils.pmap_graph_list_better(energy_graph, dataset_statistics_dict_energy)
-				# print("here energy graph", energy_graph.nodes.shape, energy_graph.n_node, energy_graph.n_edge, energy_graph.edges.shape)
-				# print("here", input_graph.nodes.shape, input_graph.n_node, input_graph.n_edge, input_graph.edges.shape)
-				# raise ValueError("")
-				# input_graph = jraph_utils.pmap_graph_list(input_graph, k = self.pad_k)
-				# energy_graph = jraph_utils.pmap_graph_list(energy_graph, k = self.pad_k)
-
-			else:
-				input_graph = jraph_utils.pmap_graph_list(input_graph, k=self.pad_k)
-				energy_graph = jraph_utils.pmap_graph_list(energy_graph, k=self.pad_k)
-		else:
-			input_graph = jraph_utils.pmap_transformer_list(input_graph, k=self.pad_k)
-			energy_graph = jraph_utils.pmap_transformer_list(energy_graph, k=self.pad_k)
-
-
-		return input_graph, energy_graph
 
 	def __plot_figures(self, log_dict, mode = "eval", step = None):
 		if not self.use_wandb:

@@ -15,7 +15,7 @@ from .utils import (
     calculate_order_violations,
     calculate_owner_assignments,
     compute_node_graph_indices,
-    pad_energy_graph,
+    pad_graph,
     prior_logits_for_graph,
     sample_prior_state,
 )
@@ -32,5 +32,5 @@ __all__ = [
     "compute_node_graph_indices",
     "prior_logits_for_graph",
     "sample_prior_state",
-    "pad_energy_graph",
+    "pad_graph",
 ]

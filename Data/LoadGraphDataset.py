@@ -1,17 +1,11 @@
 import os
 import random
-
-import jax
-from torch.utils.data import Dataset
 import pickle
+
 import numpy as np
-import igraph
-import jraph
 import torch
-from torch.utils.data import DataLoader
-from unipath import Path
-import os
-import jraph_utils
+from torch.utils.data import Dataset, DataLoader
+
 from GraphWithMeta import GraphWithMeta
 
 
@@ -60,12 +54,6 @@ class SolutionDatasetLoader:
             for key in batch_dict.keys():
                 batch_dict[key].append(el[key])
 
-        # jraph_graphs = [el["input_graph"] for el in batch]
-        # energy_graphs = [el["energy_graph"] for el in batch]
-        # gt_normed_energies = [el["energies"] for el in batch]
-        # gt_spin_states = [el["gs_bins"] for el in batch]
-        # U_net_graphs_dict = [el["U_net_graphs_dict"] for el in batch]
-        # #print(gt_spin_states)
         return batch_dict
 
     def dataloaders(self):
@@ -150,25 +138,17 @@ class SolutionDatasetLoader:
 
         statistics_dict = {}
         statistics_dict["input_graph"] = {"n_edges": [], "n_nodes": []}
-        statistics_dict["energy_graph"] = {"n_edges": [], "n_nodes": []}
 
         for batch_dict in current_dataloader:
             input_graph = batch_dict["input_graph"]
-            energy_graph = batch_dict["energy_graph"]
-            energy_graph_nodes = [int(el.graph.n_node[0]) for el in energy_graph]
             input_graph_nodes = [int(el.graph.n_node[0]) for el in input_graph]
-            energy_graph_edges = [int(el.graph.n_edge[0]) for el in energy_graph]
             input_graph_edges = [int(el.graph.n_edge[0]) for el in input_graph]
 
             statistics_dict["input_graph"]["n_edges"].extend(input_graph_edges)
-            statistics_dict["energy_graph"]["n_edges"].extend(energy_graph_edges)
             statistics_dict["input_graph"]["n_nodes"].extend(input_graph_nodes)
-            statistics_dict["energy_graph"]["n_nodes"].extend(energy_graph_nodes)
 
         current_dataloader.smallest_n_edges_input_graph, current_dataloader.largest_n_edges_input_graph = get_x_smallest_and_largest(statistics_dict["input_graph"]["n_edges"], self.batch_size)
-        current_dataloader.smallest_n_edges_energy_graph, current_dataloader.largest_n_edges_energy_graph = get_x_smallest_and_largest(statistics_dict["energy_graph"]["n_edges"], self.batch_size)
         current_dataloader.smallest_n_nodes_input_graph, current_dataloader.largest_n_nodes_input_graph = get_x_smallest_and_largest(statistics_dict["input_graph"]["n_nodes"], self.batch_size)
-        current_dataloader.smallest_n_nodes_energy_graph, current_dataloader.largest_n_nodes_energy_graph = get_x_smallest_and_largest(statistics_dict["energy_graph"]["n_nodes"], self.batch_size)
         print("dataset statistics",mode, current_dataloader.smallest_n_edges_input_graph, current_dataloader.largest_n_edges_input_graph)
 
 
@@ -256,27 +236,9 @@ class SolutionDataset_InMemory(Dataset):
 
         input_graph = graph_dict["H_graphs"]
 
-
-        if("compl_H_graphs" in graph_dict.keys()):
-            if( graph_dict["compl_H_graphs"] != None):
-                energy_graphs = graph_dict["compl_H_graphs"]
-            elif(type(graph_dict["compl_H_graphs"]) == list):
-                if(len(graph_dict["compl_H_graphs"]) > 0):
-                    energy_graphs = graph_dict["compl_H_graphs"]
-            else:
-                energy_graphs = input_graph
-        else:
-            if(self.problem_name == "MaxCl" or self.problem_name == "TSP" or self.problem_name == "MIS" or self.problem_name == "MaxClv2"):
-                print(graph_dict.keys())
-                raise ValueError("that is not possible")
-            energy_graphs = input_graph
-
-        # print("compare edges of input graph and energy graph", energy_graphs.edges.shape, input_graph.edges.shape)
-        # print("compare edges of input graph and energy graph", energy_graphs.edges, input_graph.edges.shape)
         input_graph = GraphWithMeta(graph=input_graph.graph._replace(edges = input_graph.graph.edges.astype(np.float32)), meta=input_graph.meta)
-        energy_graphs = input_graph#energy_graphs._replace(edges = energy_graphs.edges.astype(np.float32))
 
-        return_dict = {"input_graph": input_graph, "energy_graph": energy_graphs, "energies": graph_dict["Energies"],
+        return_dict = {"input_graph": input_graph, "energies": graph_dict["Energies"],
                        "bs_bins": graph_dict["gs_bins"]}
         
         # Cache the result

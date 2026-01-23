@@ -65,9 +65,9 @@ class Base(ABC):
         self.calc_loss = self.NoiseDistrClass.combine_losses
 
         self.loss_grad = jax.jit(jax.value_and_grad(self.get_loss, has_aux=True))
-        self.pmap_sample = jax.pmap(self.sample, in_axes=(0, 0, 0, None, 0))
+        self.pmap_sample = jax.pmap(self.sample, in_axes=(0, 0, None, 0))
 
-        self.pmap_loss_backward = jax.pmap(self.loss_backward, in_axes=(0, 0, 0, 0, None, 0), axis_name="device")
+        self.pmap_loss_backward = jax.pmap(self.loss_backward, in_axes=(0, 0, 0, None, 0), axis_name="device")
 
         self.vmapped_sample_forward_diff_process = jax.vmap(self.NoiseDistrClass.sample_forward_diff_process, in_axes=(1, None, 0), out_axes=(1,1, 0))
 
@@ -133,18 +133,20 @@ class Base(ABC):
     def _apply_CE(self):
         pass
 
-    def train_step(self, params, opt_state, graphs, energy_graph_batch, T, key):
+    def train_step(self, params, opt_state, graph_batch, T, key):
 
         key, subkey = jax.random.split(key)
         batched_key = jax.random.split(subkey, num=len(jax.devices()))
 
-        (loss, (log_dict, _)), params, opt_state = self.pmap_loss_backward_step(params, opt_state, graphs, energy_graph_batch, T, batched_key)
-        return params, opt_state, loss, (log_dict, energy_graph_batch, key)
+        (loss, (log_dict, _)), params, opt_state = self.pmap_loss_backward_step(
+            params, opt_state, graph_batch, T, batched_key
+        )
+        return params, opt_state, loss, (log_dict, graph_batch, key)
 
 
-    def evaluation_step(self, params, graph_batch, energy_graph_batch, T, batched_key, mode="eval", key=None, n_sampling_rounds=None, sampling_temp=None, sampling_mode = "temps", epoch = None, epochs = None):
+    def evaluation_step(self, params, graph_batch, T, batched_key, mode="eval", key=None, n_sampling_rounds=None, sampling_temp=None, sampling_mode = "temps", epoch = None, epochs = None):
         start_forw_pass_time = time.time()
-        loss, (log_dict, _) = self.pmap_sample(params, graph_batch, energy_graph_batch, T, batched_key)
+        loss, (log_dict, _) = self.pmap_sample(params, graph_batch, T, batched_key)
         end_forw_pass_time = time.time()
 
         log_dict["time"] = {}
@@ -167,13 +169,13 @@ class Base(ABC):
         return node_graph_idx, n_graph, total_num_nodes
 
     def _compute_solution_prob_stats(self, graphs, spin_logits_next, node_gr_idx):
-        solution_nodes = graphs["graphs"][0].graph.globals["solution_nodes"]
-        num_cabinets = graphs["graphs"][0].meta["cabinets"]
+        solution_nodes = graphs.graph.globals["solution_nodes"]
+        num_cabinets = graphs.meta["cabinets"]
         solution_spins_last_step = (
             jax.nn.one_hot(solution_nodes, num_classes=num_cabinets)[:, None, None]
             * jax.lax.stop_gradient(spin_logits_next)
         ).sum(-1)
-        n_graphs = graphs["graphs"][0].graph.n_node.shape[0]
+        n_graphs = graphs.graph.n_node.shape[0]
         solution_prob_last_step = jax.ops.segment_sum(solution_spins_last_step, node_gr_idx, n_graphs)[:-1]
         solution_prob_min_factor = jax.ops.segment_min(solution_spins_last_step, node_gr_idx, n_graphs)[:-1]
         return solution_prob_last_step.mean(), solution_prob_min_factor.mean()
@@ -186,4 +188,3 @@ def repeat_along_nodes(nodes, n_node, target_per_graph):
                                           total_repeat_length=total_nodes)
 
     return target_per_node
-

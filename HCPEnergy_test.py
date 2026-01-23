@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from DatasetCreator.loadGraphDatasets.HCPDatasetGenerator import plot, plot_graph_flat
 from Data.LoadGraphDataset import SolutionDatasetLoader
-from house_config import compute_node_graph_indices, pad_energy_graph, sample_prior_state
+from house_config import compute_node_graph_indices, pad_graph, sample_prior_state
 import argparse
 import os
 import itertools
@@ -37,10 +37,10 @@ if __name__ == "__main__":
             raise RuntimeError("Dataset statistics unavailable because the dataloader is None.")
 
         required_attrs = (
-            "smallest_n_nodes_energy_graph",
-            "largest_n_nodes_energy_graph",
-            "smallest_n_edges_energy_graph",
-            "largest_n_edges_energy_graph",
+            "smallest_n_nodes_input_graph",
+            "largest_n_nodes_input_graph",
+            "smallest_n_edges_input_graph",
+            "largest_n_edges_input_graph",
         )
         missing = [attr for attr in required_attrs if not hasattr(dataloader, attr)]
         if missing:
@@ -53,10 +53,10 @@ if __name__ == "__main__":
         return {
             "grid_num": grid_num,
             "edge_grid_factor": edge_grid_factor,
-            "min_nodes": getattr(dataloader, "smallest_n_nodes_energy_graph"),
-            "max_nodes": getattr(dataloader, "largest_n_nodes_energy_graph"),
-            "min_edges": getattr(dataloader, "smallest_n_edges_energy_graph"),
-            "max_edges": getattr(dataloader, "largest_n_edges_energy_graph"),
+            "min_nodes": getattr(dataloader, "smallest_n_nodes_input_graph"),
+            "max_nodes": getattr(dataloader, "largest_n_nodes_input_graph"),
+            "min_edges": getattr(dataloader, "smallest_n_edges_input_graph"),
+            "max_edges": getattr(dataloader, "largest_n_edges_input_graph"),
         }
 
     jax.config.update("jax_disable_jit", True)
@@ -88,25 +88,25 @@ if __name__ == "__main__":
     dataset_stats = _build_dataset_statistics(dataloader)
 
     batch = next(x for i,x in enumerate(iter(dataloader)) if i==0)
-    graph_with_meta = batch["energy_graph"][0]
+    graph_with_meta = batch["input_graph"][0]
     key = jax.random.PRNGKey(args.sample_seed)
     raw_sample, _, key = sample_prior_state(graph_with_meta, key)
 
-    padded_energy_graph = pad_energy_graph(graph_with_meta, dataset_stats)
-    energy_graph = padded_energy_graph
-    node_gr_idx, _, _ = compute_node_graph_indices(energy_graph)
+    padded_graph = pad_graph(graph_with_meta, dataset_stats)
+    graph = padded_graph
+    node_gr_idx, _, _ = compute_node_graph_indices(graph)
 
-    total_nodes = jax.tree_util.tree_leaves(energy_graph.nodes)[0].shape[1]
+    total_nodes = jax.tree_util.tree_leaves(graph.nodes)[0].shape[1]
     pad_amount = total_nodes - raw_sample.shape[0]
     if pad_amount < 0:
         raise ValueError("Padded graph has fewer nodes than the sampled state length.")
     if pad_amount > 0:
         raw_sample = jnp.pad(raw_sample, (0, pad_amount))
 
-    node_types = np.array(energy_graph.globals["node_types"].squeeze())
-    plot(None, node_types[:-1], "solution_nodes.png", solution_nodes=energy_graph.globals["solution_nodes"].squeeze()[:-1], meta_graph=graph_with_meta)
-    plot_graph_flat(energy_graph.globals["solution_nodes"].squeeze()[:-1], node_types[None, :-1], clip_after_per_type=None, target="solution_flat.png")
-    plot_graph_flat(energy_graph.globals["solution_nodes"].squeeze()[:-1], node_types[None, :-1], clip_after_per_type=5, target="solution_flat_clip.png")
+    node_types = np.array(graph.globals["node_types"].squeeze())
+    plot(None, node_types[:-1], "solution_nodes.png", solution_nodes=graph.globals["solution_nodes"].squeeze()[:-1], meta_graph=graph_with_meta)
+    plot_graph_flat(graph.globals["solution_nodes"].squeeze()[:-1], node_types[None, :-1], clip_after_per_type=None, target="solution_flat.png")
+    plot_graph_flat(graph.globals["solution_nodes"].squeeze()[:-1], node_types[None, :-1], clip_after_per_type=5, target="solution_flat_clip.png")
 
     raw_sample = raw_sample.astype(np.int32).squeeze()
     prior_sample = np.full((total_nodes,), -1)
@@ -117,10 +117,10 @@ if __name__ == "__main__":
     plot_graph_flat(prior_sample, node_types[None, :-1], clip_after_per_type=5, target="prior_flat_clip.png")
 
     sample_logits = prior_logits_for_graph(graph_with_meta)
-    energy_fn.calculate_Energy(energy_graph, energy_graph.globals["solution_nodes"].squeeze(), node_gr_idx)
+    energy_fn.calculate_Energy(graph, graph.globals["solution_nodes"].squeeze(), node_gr_idx)
     
-    assert energy_fn.calculate_Energy(energy_graph, energy_graph.globals["solution_nodes"].squeeze(), node_gr_idx)[0].sum() == 0
-    energy, violations, hb = energy_fn.calculate_Energy(energy_graph, raw_sample.astype(jnp.int32), node_gr_idx)
+    assert energy_fn.calculate_Energy(graph, graph.globals["solution_nodes"].squeeze(), node_gr_idx)[0].sum() == 0
+    energy, violations, hb = energy_fn.calculate_Energy(graph, raw_sample.astype(jnp.int32), node_gr_idx)
     print(f"Loaded dataset='{args.dataset}' mode='{args.mode}' sample={args.sample_idx}")
     print("Sampled state energy per graph:", energy)
     print("Violations per node:", violations)

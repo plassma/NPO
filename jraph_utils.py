@@ -193,7 +193,8 @@ def device_batch(graph_generator, np_ = np):
             batch.append(graph)
 
 
-def pmap_graph_list_better(maybe_meta_graph_list, dataset_statistics_dict, pad_func = pad_with_graphs, return_size = False):
+def pmap_graph_list_better(maybe_meta_graph_list, dataset_statistics_dict=None, pad_func=pad_with_graphs, return_size=False):
+    """Device-batch graphs and add a single padding node per device batch."""
     is_meta = False
     n_devices = jax.local_device_count()
     maybe_meta_graph_list = _ensure_list(maybe_meta_graph_list)
@@ -207,20 +208,27 @@ def pmap_graph_list_better(maybe_meta_graph_list, dataset_statistics_dict, pad_f
         jraph_graph_list = [el.graph for el in maybe_meta_graph_list]
     else:
         jraph_graph_list = maybe_meta_graph_list
-    
-    device_batched_graphs = [jraph.batch_np(jraph_graph_list[idx * n_graphs_per_device: (idx + 1) * n_graphs_per_device])
-                             for idx in range(n_devices)] ### TODO move this to collate function
 
+    device_batched_graphs = [
+        jraph.batch_np(jraph_graph_list[idx * n_graphs_per_device : (idx + 1) * n_graphs_per_device])
+        for idx in range(n_devices)
+    ]
 
-    padded_graph_list, max_pad_nodes_to, max_pad_edges_to = pad_graphs_to_same_size_from_statistics(device_batched_graphs, dataset_statistics_dict, pad_func = pad_func)
+    max_nodes = max(int(np.sum(graph.n_node)) for graph in device_batched_graphs)
+    max_edges = max(int(np.sum(graph.n_edge)) for graph in device_batched_graphs)
+
+    padded_graph_list = [
+        pad_func(graph, max_nodes + 1, max_edges, graph.n_node.shape[0] + 1)
+        for graph in device_batched_graphs
+    ]
+
     device_batched_graphs = next(device_batch(padded_graph_list))
-    # print("make list", step2-step1)
-    # print("pad graphs", step3-step2)
-    # print("next generator", step4-step3)
+    device_batched_graphs = jax.tree_util.tree_map(
+        lambda leaf: jnp.asarray(leaf) if hasattr(leaf, "shape") else leaf, device_batched_graphs
+    )
     if is_meta:
         meta = _merge_meta(meta_list)
         device_batched_graphs = GraphWithMeta(graph=device_batched_graphs, meta=meta)
-    if(return_size):
-        return device_batched_graphs, max_pad_nodes_to, max_pad_edges_to
-    else:
-        return device_batched_graphs
+    if return_size:
+        return device_batched_graphs, max_nodes + 1, max_edges
+    return device_batched_graphs

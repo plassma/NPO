@@ -207,8 +207,8 @@ def sample_prior_state(meta_graph, key, soft: bool = False):
     return sample.astype(jnp.int32), logits, key
 
 
-def pad_energy_graph(graph_with_meta, dataset_statistics):
-    """Pad a single energy graph using stored dataset statistics."""
+def pad_graph(graph_with_meta, dataset_statistics):
+    """Pad a single graph using stored dataset statistics."""
     padded = pmap_graph_list_better([graph_with_meta], dataset_statistics)
     graph = padded.graph if isinstance(padded, GraphWithMeta) else padded
     graph = jax.tree_util.tree_map(lambda leaf: jnp.asarray(leaf) if hasattr(leaf, "shape") else leaf, graph)
