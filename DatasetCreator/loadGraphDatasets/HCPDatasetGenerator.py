@@ -5,7 +5,7 @@ import networkx as nx
 from typing import Optional
 
 from .BaseDatasetGenerator import BaseDatasetGenerator
-from DatasetCreator.jraph_utils import utils as jutils
+from jraph_utils import from_igraph_to_jgraph
 from tqdm import tqdm
 import numpy as np
 import igraph as ig
@@ -183,7 +183,7 @@ class HCProblem:
 		
 	@property
 	def meta_graph(problem) -> GraphWithMeta:
-		H_graph = jutils.from_igraph_to_jgraph(problem.igraph)
+		H_graph = from_igraph_to_jgraph(problem.igraph)
 		H_graph = H_graph._replace(globals=problem.globals)
 
 		return GraphWithMeta(graph=H_graph, meta={"rooms": problem.rooms, "cabinets": problem.cabinets, "things": problem.things, "persons": problem.persons, "id": -1,

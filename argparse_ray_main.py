@@ -38,7 +38,6 @@ parser.add_argument('--inner_loop_steps', default=1, type = int, help='number of
 parser.add_argument('--project_name', default= "", type = str, help='define project name')
 parser.add_argument('--beta_factor', default=[1.], type = float, help='desfine noise strength', nargs = "+")
 parser.add_argument('--loss_alpha', default=0.0, type = float, help='rel weighteing between forward and reverse KL')
-parser.add_argument('--MCMC_steps', default=0, type = int, help='number of MCMC steps')
 parser.add_argument('--mov_average', default=0.0009, type = float, help='moving_average for RL')
 parser.add_argument('--TD_k', default=3, type = float, help='TD_k for PPO')
 parser.add_argument('--clip_value', default=0.2, type = float, help='clip_value for PPO/GRPO')
@@ -123,11 +122,11 @@ def meanfield_run():
 
     np.set_printoptions(threshold=np.inf, linewidth=np.inf, suppress=True,)# precision=4
     if(local_mode):
-        import jax
-        if args.EnergyFunction == "MIS":
-            run(flexible_config = {"jit": False, "dataset_name": "RB_iid_100", "problem_name": "MIS", "edge_updates": False, "mode_node_edge": "node", "n_diffusion_steps": 3}, overwrite = True)
-        else:
-            run(flexible_config = {"load_step": args.load_step, "load_only_params": args.load_only_params, "node_transformer_num_layers": args.node_transformer_layers, "N_equil": args.N_equil, "AnnealSchedule": args.AnnealSchedule, "use_sample": args.use_sample, "jit": args.jit, "dataset_name": "HCP_dummy", "problem_name": "HCP", "edge_updates": True, "N_anneal": args.N_anneal[0], "load_wandb_id": args.load_wandb_id, "n_diffusion_steps": args.n_diffusion_steps[0], "minib_diff_steps": args.minib_diff_steps, "minib_basis_states": args.minib_basis_states, "N_basis_states": args.n_basis_states[0], "train_mode": args.train_mode, "T_max": args.temps[0], "T_target": args.T_target, "embedding_dim": args.embedding_dim, "lr": args.lrs[0], "min_lr": args.lrs[0] / 4}, overwrite = True) # "load_wandb_id": "oz5t74ww"
+        run(flexible_config = {"load_step": args.load_step, "load_only_params": args.load_only_params, "node_transformer_num_layers": args.node_transformer_layers, "N_equil": args.N_equil, 
+                               "AnnealSchedule": args.AnnealSchedule, "use_sample": args.use_sample, "jit": args.jit, "dataset_name": "HCP_dummy", "problem_name": "HCP", "edge_updates": True, 
+                               "N_anneal": args.N_anneal[0], "load_wandb_id": args.load_wandb_id, "n_diffusion_steps": args.n_diffusion_steps[0], "minib_diff_steps": args.minib_diff_steps, 
+                               "minib_basis_states": args.minib_basis_states, "N_basis_states": args.n_basis_states[0], "train_mode": args.train_mode, "T_max": args.temps[0], 
+                               "T_target": args.T_target, "embedding_dim": args.embedding_dim, "lr": args.lrs[0], "min_lr": args.lrs[0] / 10}, overwrite = True) # "load_wandb_id": "oz5t74ww"
     else:
         detect_and_run_for_loops()
     
@@ -158,9 +157,9 @@ def detect_and_run_for_loops():
                                         ###checks
                                         if(args.train_mode != "REINFORCE"):
                                             if(diff_steps%args.minib_diff_steps!= 0):
-                                                raise ValueError("args.n_diffusion_steps%args.miniminib_diff_steps is not zero!")
+                                                raise ValueError("args.n_diffusion_steps%args.minib_diff_steps is not zero!")
                                             if(n_basis_state%args.minib_basis_states!= 0):
-                                                raise ValueError("args.n_basis_sates%args.minib_basis_states is not zero!")
+                                                raise ValueError("args.n_basis_states%args.minib_basis_states is not zero!")
 
                                             if (batch_size % len(args.GPUs) != 0):
                                                 raise ValueError("args.batch_size%len(args.GPUs) should be zero!")
@@ -196,7 +195,6 @@ def detect_and_run_for_loops():
                                             "grad_clip": args.grad_clip,
                                             "graph_mode": args.graph_mode,
                                             "loss_alpha": args.loss_alpha,
-                                            "MCMC_steps": args.MCMC_steps,
                                             "train_mode": args.train_mode,
 
                                             "inner_loop_steps": args.inner_loop_steps,
@@ -237,7 +235,7 @@ def run( flexible_config, overwrite = True):
         "n_graphs": 1,
         "mode": "Diffusion",  # either Diffusion or MeanField
         "dataset_name": "RB_iid_100",
-        "problem_name": "MIS",
+        "problem_name": "HCP",
         "jit": True,
         "wandb": True,
 
@@ -277,7 +275,6 @@ def run( flexible_config, overwrite = True):
         "messeage_concat": False,
         "graph_mode": "normal",
         "loss_alpha": 0.0,
-        "MCMC_steps": 0,
         "train_mode": "PPO",
         "inner_loop_steps": 2,
         "minib_diff_steps": 2,

@@ -7,16 +7,13 @@ export COVERAGE_FILE="$ROOT/.coverage"
 rm -f "$ROOT/.coverage" "$ROOT/.coverage".* "$ROOT/coverage.xml"
 rm -rf "$ROOT/htmlcov"
 
-# 1) dataset creator run (still cd, but writes coverage into ROOT because COVERAGE_FILE is absolute)
-(
-  cd "$ROOT/DatasetCreator"
-  coverage run --parallel-mode --source="$ROOT" prepare_datasets.py --dataset HCP_dummy --problem HCP
-)
+# 1) dataset creator run from repo root so module imports resolve consistently
+coverage run --parallel-mode --source="$ROOT" -m DatasetCreator.prepare_datasets --dataset HCP_dummy --problem HCP
 
 # 2) main run from repo root
 cd "$ROOT"
 coverage run --parallel-mode --source="$ROOT" argparse_ray_main.py \
-  --GPUs 2 --IsingMode HCP_dummy --EnergyFunction HCP --N_anneal 300 \
+  --GPUs 6 --IsingMode HCP_dummy --EnergyFunction HCP --N_anneal 300 \
   --n_diffusion_steps 4 --minib_diff_steps 4 --batch_size 100 --n_basis_states 1000 \
   --minib_basis_states 25 --noise_potential annealed_obj --project_name HCP_main --seed 420 \
   --debug --jit --train_mode PPO --use-sample 0 --AnnealSchedule linear --temps 0.001 \

@@ -1,15 +1,17 @@
-import jraph
-import jax.numpy as jnp
-import numpy as np
 import itertools
+
 import jax
-import time
+import jax.numpy as jnp
 import jax.tree_util as tree
+import jraph
+import numpy as np
+
+from DatasetCreator.jraph_utils.utils import from_igraph_to_jgraph
 from GraphWithMeta import GraphWithMeta
 
 def global_graph_aggr(feature, node_graph_idx, n_graph):
-		aggr_feature = jax.ops.segment_sum(feature, node_graph_idx, n_graph)
-		return aggr_feature
+    aggr_feature = jax.ops.segment_sum(feature, node_graph_idx, n_graph)
+    return aggr_feature
 
 def _ensure_list(graphs):
     if isinstance(graphs, (list, tuple)):
@@ -46,8 +48,6 @@ def _meta_dict_equal(lhs, rhs):
 
 def _merge_meta(meta_list):
     base_meta = dict(meta_list[0])
-    if not all(_meta_dict_equal(base_meta, meta) for meta in meta_list[1:]):
-        base_meta = dict(meta_list[0])
     base_meta["n_graphs"] = len(meta_list)
     base_meta.update({f"{k}_concat": [meta[k] for meta in meta_list] for k in meta_list[0].keys()})
     return base_meta

@@ -16,7 +16,7 @@ from GraphWithMeta import GraphWithMeta
 
 
 class SolutionDatasetLoader:
-    def __init__(self, config = {}, dataset="MIS", problem="MIS", batch_size=32, relaxed=False, seed=123, mode = "train"):
+    def __init__(self, config = {}, dataset="HCP", problem="HCP", batch_size=32, relaxed=False, seed=123, mode = "train"):
         self.dataset_name = dataset
         self.problem_name = problem
         self.batch_size = batch_size
@@ -201,7 +201,7 @@ class SolutionDatasetLoader:
 
 
 class SolutionDataset_InMemory(Dataset):
-    def __init__(self, config = {}, dataset="ENZYMES", problem="MIS", mode="val", relaxed=False, seed=123):  ### TODO add orderign to config
+    def __init__(self, config = {}, dataset="ENZYMES", problem="HCP", mode="val", relaxed=False, seed=123):  ### TODO add orderign to config
         self.config = config
         self.dataset_name = dataset
         self.problem_name = problem
@@ -224,10 +224,7 @@ class SolutionDataset_InMemory(Dataset):
             self.__getitem__(i)
 
     def get_dataset_paths(self, cfg, mode="", seed=None):
-        if(self.problem_name == "MaxClv2"):
-            select_data_name =  "MaxCl"
-        else:
-            select_data_name =  self.problem_name
+        select_data_name =  self.problem_name
 
         base_path = os.path.dirname(os.getcwd()) + "/DIffUCO/DatasetCreator/loadGraphDatasets/DatasetSolutions/"
 
@@ -259,10 +256,6 @@ class SolutionDataset_InMemory(Dataset):
 
         input_graph = graph_dict["H_graphs"]
 
-        if("U_net_graph_dict" in graph_dict.keys()):
-            U_net_graph_dict = graph_dict["U_net_graph_dict"]
-        else:
-            U_net_graph_dict = None
 
         if("compl_H_graphs" in graph_dict.keys()):
             if( graph_dict["compl_H_graphs"] != None):
@@ -284,7 +277,7 @@ class SolutionDataset_InMemory(Dataset):
         energy_graphs = input_graph#energy_graphs._replace(edges = energy_graphs.edges.astype(np.float32))
 
         return_dict = {"input_graph": input_graph, "energy_graph": energy_graphs, "energies": graph_dict["Energies"],
-                       "U_net_graph_dict": U_net_graph_dict, "bs_bins": graph_dict["gs_bins"]}
+                       "bs_bins": graph_dict["gs_bins"]}
         
         # Cache the result
         self._data_cache[idx] = return_dict

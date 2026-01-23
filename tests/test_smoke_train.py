@@ -71,7 +71,6 @@ def _smoke_config():
         "messeage_concat": False,
         "graph_mode": "normal",
         "loss_alpha": 0.0,
-        "MCMC_steps": 0,
         "train_mode": "GRPO",
         "inner_loop_steps": 2,
         "minib_diff_steps": 4,

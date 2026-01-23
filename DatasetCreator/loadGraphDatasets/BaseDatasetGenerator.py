@@ -8,7 +8,7 @@ import jraph
 import pickle
 import numpy as np
 from pathlib import Path
-from DatasetCreator.jraph_utils import utils as jutils
+from jraph_utils import from_igraph_to_jgraph
 from .save_utils import save_indexed_dict, load_indexed_dict
 import igraph as ig
 import networkx as nx
@@ -116,7 +116,7 @@ class BaseDatasetGenerator(ABC):
 		"""
 		density = 2 * g.ecount() / (g.vcount() * (g.vcount() - 1))
 		graph_size = g.vcount()
-		return jutils.from_igraph_to_jgraph(g), density, graph_size
+		return from_igraph_to_jgraph(g), density, graph_size
 
 	def nx_to_jraph(self, gnx: nx.Graph) -> (jraph.GraphsTuple, float, int):
 		"""
@@ -128,7 +128,7 @@ class BaseDatasetGenerator(ABC):
 		g = ig.Graph.TupleList(gnx.edges(), directed=False)
 		density = 2 * g.ecount() / (g.vcount() * (g.vcount() - 1))
 		graph_size = g.vcount()
-		return jutils.from_igraph_to_jgraph(g), density, graph_size
+		return from_igraph_to_jgraph(g), density, graph_size
 
 	def nx_to_igraph(self, gnx: nx.Graph) -> ig.Graph:
 		"""
