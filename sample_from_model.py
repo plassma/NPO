@@ -229,7 +229,7 @@ def plot_time_progression(log_dict, select_sample=0):
 
     graph_batch = log_dict["graph_batch"]
 
-    node_gr_idx = jnp.repeat(jnp.arange(graph_batch.graph.n_node.shape[1]), graph_batch.graph.n_node[0], axis=0, total_repeat_length=graph_batch.graph.n_node.sum())
+    node_gr_idx = _, _ = graph_batch.get_graph_info()
 
     for t in range(T):
         sample = time_progression[t, :, select_sample].astype(int)

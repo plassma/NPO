@@ -30,16 +30,11 @@ class AnnealedNoiseDistr(BaseNoiseDistr):
 
     def get_log_p_T_0(self, jraph_graph, X_prev, X_next, t_idx, T):
         T = jnp.max(jnp.array([T, 10**-6]))
-        nodes = jraph_graph.nodes
-        n_node = jraph_graph.n_node
-        n_graph = jraph_graph.n_node.shape[0]
-        graph_idx = jnp.arange(n_graph)
-        total_num_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
-        node_gr_idx = jnp.repeat(graph_idx, n_node, axis=0, total_repeat_length=total_num_nodes)
+        node_graph_idx, _, _ = jraph_graph.get_graph_info()
 
         gamma_t = self.get_gamma_t(t_idx)
         Noise_Energy_per_graph, _, _ = self.vmapped_relaxed_energy_for_Loss(
-            jraph_graph, X_prev, node_gr_idx, self.config.get("ownership_weight", 1.0)
+            jraph_graph, X_prev, node_graph_idx, self.config.get("ownership_weight", 1.0)
         )
         Noise_Energy_per_graph = jnp.squeeze(Noise_Energy_per_graph, axis = -1)
         log_p = (-1)*gamma_t/T*Noise_Energy_per_graph

@@ -16,17 +16,11 @@ class BernoulliNoiseDistr(BaseNoiseDistr):
 
     @partial(jax.jit, static_argnums=(0))
     def get_log_p_T_0(self, jraph_graph, X_prev, X_next, t_idx, T):
-        nodes = jraph_graph.nodes
-        n_node = jraph_graph.n_node
-        n_graph = jraph_graph.n_node.shape[0]
-        graph_idx = jnp.arange(n_graph)
-        total_num_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
-        node_gr_idx = jnp.repeat(graph_idx, n_node, axis=0, total_repeat_length=total_num_nodes)
+        node_graph_idx, n_graph, n_node = jraph_graph.get_graph_info()
         log_p_per_node = self.get_log_p_T_0_per_node(X_prev, X_next, t_idx)
 
         n_graph = jraph_graph.n_node.shape[0]
-        log_p_per_graph = jax.ops.segment_sum(log_p_per_node, node_gr_idx, n_graph)
-
+        log_p_per_graph = jax.ops.segment_sum(log_p_per_node, node_graph_idx, n_graph)
         return log_p_per_graph
 
     @partial(jax.jit, static_argnums=(0))

@@ -17,12 +17,7 @@ class CategoricalNoseDistr(BaseNoiseDistr):
 
     @partial(jax.jit, static_argnums=(0,))
     def get_log_p_T_0(self, jraph_graph, X_prev, X_next, t_idx, T):
-        nodes = jraph_graph.nodes
-        n_node = jraph_graph.n_node
-        n_graph = jraph_graph.n_node.shape[0]
-        graph_idx = jnp.arange(n_graph)
-        total_num_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
-        node_gr_idx = jnp.repeat(graph_idx, n_node, axis=0, total_repeat_length=total_num_nodes)
+        node_graph_idx, n_graph, n_node = jraph_graph.get_graph_info()
 
         gamma_t = self.get_gamma_t(t_idx)
         beta_t = 2 * gamma_t
@@ -34,9 +29,9 @@ class CategoricalNoseDistr(BaseNoiseDistr):
         noise_per_node = jnp.sum(log_p_i, axis=-1)
         n_graph = jraph_graph.n_node.shape[0]
 
-        log_p_per_graph = jax.ops.segment_sum(noise_per_node, node_gr_idx, n_graph)
+        log_p_per_graph = jax.ops.segment_sum(noise_per_node, node_graph_idx, n_graph)
 
-        #graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(noise_per_node, node_gr_idx, n_graph) / (n_node[:, None]))[:-1]))
+        #graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(noise_per_node, node_graph_idx, n_graph) / (n_node[:, None]))[:-1]))
         # print(t_idx, gamma_t, "gamma_t")
         # print("average prob p T:0", jnp.mean(graph_log_prob))
 

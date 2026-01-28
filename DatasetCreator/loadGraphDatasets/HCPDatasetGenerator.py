@@ -5,12 +5,12 @@ import networkx as nx
 from typing import Optional
 
 from .BaseDatasetGenerator import BaseDatasetGenerator
-from jraph_utils import from_igraph_to_jgraph
+from DatasetCreator.jraph_utils import from_igraph_to_jgraph
 from tqdm import tqdm
 import numpy as np
 import igraph as ig
 import matplotlib.pyplot as plt
-from GraphWithMeta import GraphWithMeta
+from Problems.HCPGraph import HCPGraph
 from matplotlib.colors import ListedColormap
 
 ROOMS = 0
@@ -182,11 +182,11 @@ class HCProblem:
 		return plot(self.igraph, self.node_types, target, include_legend)
 		
 	@property
-	def meta_graph(problem) -> GraphWithMeta:
+	def meta_graph(problem) -> HCPGraph:
 		H_graph = from_igraph_to_jgraph(problem.igraph)
 		H_graph = H_graph._replace(globals=problem.globals)
 
-		return GraphWithMeta(graph=H_graph, meta={"rooms": problem.rooms, "cabinets": problem.cabinets, "things": problem.things, "persons": problem.persons, "id": -1,
+		return HCPGraph(graph=H_graph, meta={"rooms": problem.rooms, "cabinets": problem.cabinets, "things": problem.things, "persons": problem.persons, "id": -1,
 											"offset_rooms": problem.OFFSET_ROOMS, "offset_cabinets": problem.OFFSET_CABINETS, "offset_things_cabinets": problem.OFFSET_THINGS_CABINETS, "offset_things_persons": problem.OFFSET_THINGS_PERSONS, "offset_persons": problem.OFFSET_PERSONS, "n_nodes": problem.N_NODES})
 	
 def plot(igraph, node_types, target, include_legend=False, bin_solution_edge=None, solution_nodes = None, verbose=False, meta_graph=None):
@@ -502,7 +502,7 @@ class HCPDatasetGenerator(BaseDatasetGenerator):
 
 		print(f'\nGenerating HCP {self.mode} dataset "{self.dataset_name}" with {self.graph_config[f"n_{self.mode}"]} instances!\n')
 
-	def generate_dataset(self):
+	def _generate_dataset(self):
 		"""
 		Generate HCP instances for the dataset
 		"""
@@ -511,11 +511,8 @@ class HCPDatasetGenerator(BaseDatasetGenerator):
 			"H_graphs": [],
 			"gs_bins": [],
 			"graph_sizes": [],
-			"densities": [],
-			"runtimes": [],
-			"upperBoundEnergies": [],
 		}
-		edges, nodes = 0, 0
+
 		for idx, problem in enumerate(DUMMY_SAMPLES):
 			problem.plot(f"input_sample_{idx}_input.png", include_legend=False)
 			g = problem.igraph
@@ -528,28 +525,14 @@ class HCPDatasetGenerator(BaseDatasetGenerator):
 			H_graph, density, graph_size = self.igraph_to_jraph(g)
 			H_graph = H_graph._replace(globals=globals)
 
-			Energy = 0.0
-			boundEnergy = 0.0
 			solution = bin_solution
-			runtime = None
-
-			#H_graph = GraphWithMeta(graph=H_graph, meta={"rooms": problem.rooms, "cabinets": problem.cabinets, "things": problem.things, "persons": problem.persons, "id": idx,
-		#										"offset_rooms": problem.OFFSET_ROOMS, "offset_cabinets": problem.OFFSET_CABINETS, "offset_things": problem.OFFSET_THINGS_CABINETS, "offset_persons": problem.OFFSET_THINGS_PERSONS})
 			
 			H_graph = problem.meta_graph
 
 
-			solutions["Energies"].append(Energy + 0.0001)
+			solutions["Energies"].append(1e-6)
 			solutions["H_graphs"].append(H_graph)
 			solutions["gs_bins"].append(solution)
 			solutions["graph_sizes"].append(graph_size)
-			solutions["densities"].append(density)
-			solutions["runtimes"].append(runtime)
-			solutions["upperBoundEnergies"].append(boundEnergy + 0.0001)
 
-			indexed_solution_dict = {}
-			for key in solutions.keys():
-				if len(solutions[key]) > 0:
-					indexed_solution_dict[key] = solutions[key][idx]
-			self.save_instance_solution(indexed_solution_dict, idx)
-		self.save_solutions(solutions)
+		return solutions

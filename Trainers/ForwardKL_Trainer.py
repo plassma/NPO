@@ -316,7 +316,7 @@ class ForwardKL(Base):
         Xs_over_different_steps = Xs_over_different_steps.at[0].set(X_prev)
         log_q_0_T = log_q_0_T.at[0].set(log_q_T)
 
-        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(graphs)
+        node_gr_idx, _, _ = graphs.get_graph_info()
 
         scan_dict = {"log_q_0_T": log_q_0_T, "log_p_0_T":log_p_0_T, "Xs_over_different_steps": Xs_over_different_steps, "prob_over_diff_steps": prob_over_diff_steps,
                     "step": 0, "node_gr_idx": node_gr_idx, "params": params, "key": key, "X_prev": X_prev, "graphs": graphs, "T": T}

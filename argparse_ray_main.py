@@ -1,13 +1,14 @@
-import os
 import argparse
-from train import TrainMeanField
+import os
+
 import numpy as np
 
+from train import TrainMeanField
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--debug', action='store_true', help='Switch ray into local mode for debugging')
-parser.add_argument('--EnergyFunction', default='HCP', choices = ["HCP"], help='Define the EnergyFunction of the IsingModel')
-parser.add_argument('--IsingMode', default='HCP_dummy', choices = ["HCP_dummy"], help='Define the Training dataset')
+parser.add_argument('--EnergyFunction', default='HCP', choices = ["HCP", "Countdown"], help='Define the EnergyFunction of the IsingModel')
+parser.add_argument('--IsingMode', default='HCP_dummy', choices = ["HCP_dummy", "Countdown_small"], help='Define the Training dataset')
 parser.add_argument('--train_mode', default='REINFORCE', choices = ["REINFORCE", "PPO", "GRPO", "Forward_KL"], help='Use U-Net or normal GNN')
 parser.add_argument('--AnnealSchedule', default='linear', choices = ["linear", "cosine", "exp", "linear_cyclic", "piecewise_linear"], help='Define the Annealing Schedule')
 parser.add_argument('--temps', default=[0.], type = float, help='Define gridsearch over Temperature', nargs = "+")
@@ -123,7 +124,7 @@ def meanfield_run():
     np.set_printoptions(threshold=np.inf, linewidth=np.inf, suppress=True,)# precision=4
     if(local_mode):
         run(flexible_config = {"load_step": args.load_step, "load_only_params": args.load_only_params, "node_transformer_num_layers": args.node_transformer_layers, "N_equil": args.N_equil, 
-                               "AnnealSchedule": args.AnnealSchedule, "use_sample": args.use_sample, "jit": args.jit, "dataset_name": "HCP_dummy", "problem_name": "HCP", "edge_updates": True, 
+                               "AnnealSchedule": args.AnnealSchedule, "use_sample": args.use_sample, "jit": args.jit, "dataset_name": args.IsingMode, "problem_name": args.EnergyFunction, "edge_updates": True, 
                                "N_anneal": args.N_anneal[0], "load_wandb_id": args.load_wandb_id, "n_diffusion_steps": args.n_diffusion_steps[0], "minib_diff_steps": args.minib_diff_steps, 
                                "minib_basis_states": args.minib_basis_states, "N_basis_states": args.n_basis_states[0], "train_mode": args.train_mode, "T_max": args.temps[0], 
                                "T_target": args.T_target, "embedding_dim": args.embedding_dim, "lr": args.lrs[0], "min_lr": args.lrs[0] / 5}, overwrite = True) # "load_wandb_id": "oz5t74ww"
@@ -322,17 +323,20 @@ def run( flexible_config, overwrite = True):
                 config[key] = flexible_config[key]
             else:
                 raise ValueError("key does not exist")
-    config["n_bernoulli_features"] = [10, 20, 30, 100][config["use_sample"]]
+            
+    config["n_bernoulli_features"] = 10
+
+    #config["n_bernoulli_features"] = [10, 20, 30, 100][config["use_sample"]]
 
     #config["T_max"] = config["T_max"] * 16 / config["n_diffusion_steps"]
 
-    config["T_max"] = config["T_max"] * 10. / config["n_bernoulli_features"]
-    config["T_target"] = config["T_target"] * 10. / config["n_bernoulli_features"]
-    if config.get("piecewise_linear_anneal_schedule"):
-        config["piecewise_linear_anneal_schedule"] = [
-            (step, temp * 10. / config["n_bernoulli_features"])
-            for step, temp in config["piecewise_linear_anneal_schedule"]
-        ]
+    #config["T_max"] = config["T_max"] * 10. / config["n_bernoulli_features"]
+    #config["T_target"] = config["T_target"] * 10. / config["n_bernoulli_features"]
+    #if config.get("piecewise_linear_anneal_schedule"):
+    #    config["piecewise_linear_anneal_schedule"] = [
+    #        (step, temp * 10. / config["n_bernoulli_features"])
+    #        for step, temp in config["piecewise_linear_anneal_schedule"]
+    #    ]
 
     #config["lr"] = config["lr"] * (500 / config["N_anneal"])
     #config["min_lr"] = config["min_lr"] * (500 / config["N_anneal"])

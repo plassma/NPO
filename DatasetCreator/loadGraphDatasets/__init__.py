@@ -2,9 +2,10 @@
 Dataset Generator
 """
 
+from .CountdownDatasetGenerator import CountdownDatasetGenerator
 from .HCPDatasetGenerator import HCPDatasetGenerator
 
-dataset_generator_registry = {"HCP_dummy": HCPDatasetGenerator}
+dataset_generator_registry = {"HCP_dummy": HCPDatasetGenerator, "Countdown_small": CountdownDatasetGenerator,}
 
 
 def get_dataset_generator(config):

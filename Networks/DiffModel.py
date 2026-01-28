@@ -1,17 +1,18 @@
-import jax
-import numpy as np
-import jax.numpy as jnp
+from functools import partial
+
 import flax
 import flax.linen as nn
-from functools import partial
-from Networks.Modules.Transformer.TransformerEncoderStack import TransformerEncoderStack
-from Networks.Modules.Transformer.LinearTransformerEncoderStack import LinearTransformerEncoderStack
-from Networks.Modules.xLSTM.mlstm import mLSTMStack
-from house_config import prior_logits_for_graph
+import jax
+import jax.numpy as jnp
+import numpy as np
+
 from jraph_utils import global_graph_aggr
 from Networks.Modules.MLPModules.MLPs import ValueMLP
-from house_config.utils import CABINETS, ROOMS, THINGS
-
+from Networks.Modules.Transformer.LinearTransformerEncoderStack import (
+	LinearTransformerEncoderStack,
+)
+from Networks.Modules.Transformer.TransformerEncoderStack import TransformerEncoderStack
+from Networks.Modules.xLSTM.mlstm import mLSTMStack
 
 
 class DiffModel(nn.Module):
@@ -55,12 +56,23 @@ class DiffModel(nn.Module):
 
 
 	def setup(self):
-		if(self.bfloat16 == False):
+		if not self.bfloat16 :
 			dtype = jnp.float32
 		else:
 			dtype = jnp.bfloat16
 
-		
+		# Countdown specific stuff
+
+		self.number_encoder = nn.Sequential([nn.Dense(features=self.embedding_dim, dtype=dtype)])
+		self.symbol_encoder = nn.Embed(num_embeddings=50, features=self.embedding_dim, dtype=dtype)
+
+		self.category_head = nn.Sequential([
+			nn.Dense(features=self.embedding_dim * 4, dtype=dtype),
+			nn.gelu,
+			nn.Dense(features= self.n_bernoulli_features, dtype=dtype),
+		])
+
+		#general stuff
 		self.feature_proj = nn.Sequential([
 			nn.Dense(features=self.embedding_dim * 4, dtype=dtype),
 			nn.gelu,
@@ -92,11 +104,8 @@ class DiffModel(nn.Module):
 			num_heads=self.node_transformer_num_heads,
 			causal=False,
 		)
-
-		self.__vmap_get_log_probs = jax.vmap(self.__get_log_prob, in_axes=(0, None, None), out_axes=(0))
-		self.vmap_get_sinusoidal_positional_encoding = jax.vmap(get_sinusoidal_positional_encoding, in_axes=(0, None))
-		### TODO random node feature key is different during eval and sample, force them to be the same?
-
+		
+		# HCP specific stuff
 		self.W_k = nn.Sequential([nn.Dense(features=self.embedding_dim * 2, dtype=dtype), nn.gelu, nn.Dense(features=self.embedding_dim, dtype=dtype)])
 		self.W_q = nn.Sequential([nn.Dense(features=self.embedding_dim * 2, dtype=dtype), nn.gelu, nn.Dense(features=self.embedding_dim, dtype=dtype)])
 		self.W_v = nn.Sequential([nn.Dense(features=self.embedding_dim * 2, dtype=dtype), nn.gelu, nn.Dense(features=self.embedding_dim, dtype=dtype)])
@@ -117,14 +126,11 @@ class DiffModel(nn.Module):
 
 
 	@partial(flax.linen.jit, static_argnums=(0,), static_argnames=("deterministic",))
-	def __call__(self, graph_batch, X_prev, energy_per_node, t_idx_per_node, key, *, deterministic: bool = True, pred_type: int = 0):
+	def __call__(self, graph_batch, X_prev, energy_per_node, t_idx_per_node, key, *, deterministic: bool = True):
 		X_prev = X_prev.astype(jnp.int32)
-		X_prev_emb, node_types_emb, nth_of_type_emb, key = self.embed_nodes(X_prev, energy_per_node, t_idx_per_node, graph_batch, key)
+		X_prev_emb = graph_batch.embed_nodes(self, X_prev, energy_per_node, t_idx_per_node)
 		X_prev_emb = jnp.concatenate([X_prev_emb], axis = -1)
 
-		#pred_type_emb = self.pred_type_emb(jnp.full(X_prev.shape[0], pred_type, dtype=jnp.int32))
-		#embeddings = self.encode_process_decode(jraph_graph_list, X_prev)
-		# Choose between linear attention and standard transformer based on configuration
 		if self.transformer_type == "linear":
 			embeddings = self.linear_node_transformer(self.feature_proj(X_prev_emb), deterministic=deterministic)  # deterministic=deterministic
 		elif self.transformer_type == "standard":
@@ -134,57 +140,16 @@ class DiffModel(nn.Module):
 		else:
 			raise ValueError(f"Unknown transformer_type: {self.transformer_type}")
 
-		embeddings = jnp.concat([embeddings, node_types_emb, nth_of_type_emb], axis = -1)
-
 		queries = self.W_q(embeddings)
 		keys = self.W_k(embeddings)[graph_batch.globals["neighbours_per_node"]]
 
-
 		scores = jnp.einsum('nd,ncd->nc', queries, keys) / jnp.sqrt(queries.shape[-1]) #score_embeddings
 
-		mask = self.get_mask(graph_batch)
-		mask_bool = mask.astype(bool)
-		neg_inf = jnp.array(jnp.finfo(scores.dtype).min, dtype=scores.dtype)
-		masked_scores = jnp.where(mask_bool, scores, neg_inf)
-		all_masked = jnp.all(~mask_bool, axis=-1, keepdims=True)
-		safe_scores = jnp.where(all_masked, jnp.zeros_like(masked_scores), masked_scores)
-		spin_logits = jax.nn.log_softmax(safe_scores, axis=-1)
-		spin_logits = jnp.where(mask_bool, spin_logits, neg_inf)
-		spin_logits = jnp.where(all_masked, neg_inf, spin_logits)[:, None]
-
-		#fix ownership logits constant
-		start_ownerships = graph_batch.meta["offset_things_persons"]
-		end_ownerships = start_ownerships + graph_batch.meta["things"]
-		spin_logits = spin_logits.at[start_ownerships:end_ownerships].set(neg_inf)
-		rows = jnp.arange(start_ownerships, end_ownerships)
-		cols = X_prev[start_ownerships:end_ownerships, 0].astype(jnp.int32)
-		spin_logits = spin_logits.at[rows, 0, cols].set(0.0)
-
-		node_graph_idx, n_graph, n_node = self.get_graph_info(graph_batch)
-
+		#scores = self.category_head(embeddings)
 		
+		spin_logits = graph_batch.masked_logits_from_scores(scores)
 		
-		if self.value_pooling == "neighbor_attention":
-			attn_weights = jnp.exp(spin_logits[:, 0, :])
-			attn_weights = attn_weights / jnp.clip(jnp.sum(attn_weights, axis=-1, keepdims=True), a_min=1e-9)
-			value_values = self.W_v(embeddings)[graph_batch.globals["neighbours_per_node"]]
-			attn_out = jnp.einsum('nc,ncd->nd', attn_weights, value_values)
-			value_emb = global_graph_aggr(attn_out[:, None], node_graph_idx, n_graph) / jnp.sqrt(n_node[..., None, None])
-		elif self.value_pooling == "node_sum":
-			value_values = self.W_v(embeddings)
-			value_emb = global_graph_aggr(value_values[:, None], node_graph_idx, n_graph) / jnp.sqrt(n_node[..., None, None])
-		elif self.value_pooling == "graph_attention":
-			value_values = self.W_v(embeddings)
-			value_logits = self.value_gate(embeddings)[..., 0]
-			value_weights = self._segment_softmax(value_logits, node_graph_idx, n_graph)
-			weighted_values = value_values * value_weights[:, None]
-			value_emb = global_graph_aggr(weighted_values[:, None], node_graph_idx, n_graph) / jnp.sqrt(n_node[..., None, None])
-		else:
-			raise ValueError(f"Unknown value_pooling: {self.value_pooling}")
-		
-
-		Values = self.value_mlp(value_emb)[..., 0, 0]
-
+		Values = graph_batch.values_from_embeddings(embeddings, spin_logits, self)
 
 		out_dict = {
 			"spin_logits": spin_logits,
@@ -192,102 +157,20 @@ class DiffModel(nn.Module):
 		}
 		return out_dict, key
 
-	#@partial(flax.linen.jit, static_argnums=0)
-	def get_graph_info(self, graph_batch):
-		first_graph = graph_batch
-		nodes = first_graph.nodes
-		n_node = first_graph.n_node
-		n_graph = jax.tree_util.tree_leaves(n_node)[0].shape[0]
-		graph_idx = jnp.arange(n_graph)
-		total_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
-		node_graph_idx = jnp.repeat(graph_idx, n_node, axis=0, total_repeat_length=total_nodes)
-		return node_graph_idx, n_graph, n_node
-
-	def _segment_softmax(self, logits, segment_ids, num_segments):
-		max_per_seg = jax.ops.segment_max(logits, segment_ids, num_segments)
-		shifted = logits - max_per_seg[segment_ids]
-		exp = jnp.exp(shifted)
-		denom = jax.ops.segment_sum(exp, segment_ids, num_segments)
-		return exp / (denom[segment_ids] + 1e-9)
-
-	@partial(flax.linen.jit, static_argnums=0)
-	def reinit_rand_nodes(self, X_t,  key):
-		key, subkey = jax.random.split(key)
-		rand_nodes = jax.random.uniform(subkey, shape=(X_t.shape[0], self.dim_energy_per_node))
-
-		return rand_nodes, key
-
-	def get_connections_per_node(self, X_t, jraph_graph):
-		connections_per_node = jnp.zeros_like(X_t)
-		connections_per_node = connections_per_node.at[jraph_graph.meta["offset_rooms"]: jraph_graph.meta["offset_rooms"] + jraph_graph.meta["rooms"], 0].add(jnp.bincount(X_t[jraph_graph.meta["offset_cabinets"]: jraph_graph.meta["offset_cabinets"] + jraph_graph.meta["cabinets"], 0], length=jraph_graph.meta["rooms"]))
-		connections_per_node = connections_per_node.at[jraph_graph.meta["offset_cabinets"]: jraph_graph.meta["offset_cabinets"] + jraph_graph.meta["cabinets"], 0].add(things_per_cabinet:=jnp.bincount(X_t[jraph_graph.meta["offset_things_cabinets"]: jraph_graph.meta["offset_things_cabinets"] + jraph_graph.meta["things"], 0], length=jraph_graph.meta["cabinets"]))
-		connections_per_node = connections_per_node.at[jraph_graph.meta["offset_things_cabinets"]: jraph_graph.meta["offset_things_cabinets"] + jraph_graph.meta["things"], 0].add(things_per_cabinet[X_t[jnp.arange(jraph_graph.meta["things"]) + jraph_graph.meta["offset_things_cabinets"], 0]])
-		
-		return connections_per_node
-
-	@partial(flax.linen.jit, static_argnums=(0,))
-	def embed_nodes(self, X_t, energy_per_node, t_idx_per_node, jraph_graph, key):
-		dtype = jnp.bfloat16 if self.bfloat16 else jnp.float32
-		t_idx = jnp.squeeze(t_idx_per_node, axis=-1)
-		t_idx = jnp.clip(t_idx, 0, self.n_diff_steps - 1)
-		
-		if(self.time_encoding == "one_hot"):
-			T_embed = jax.nn.one_hot(t_idx, num_classes=self.n_diffusion_steps)
-		elif (self.time_encoding == "learned"):
-			T_embed = self.time_step_emb(t_idx.astype(jnp.int32)).astype(dtype)
-		else:
-			T_embed = self.vmap_get_sinusoidal_positional_encoding(t_idx, self.embedding_dim // 4).astype(dtype)
-		
-		#n_nodes_connected_to_node = self.get_connections_per_node(X_t, jraph_graph)
-		#n_nodes_connected_to_node_emb = self.vamp_get_sinusoidal_positional_encoding(n_nodes_connected_to_node[:, 0], 8, 512).astype(dtype)
-
-		node_types_emb = self.node_type_emb(jraph_graph.globals["node_types"])#self.vmap_get_sinusoidal_positional_encoding(node_types, self.embedding_dim // 4).astype(dtype) # todo plassma: max position hardcoded for now
-
-		nth_of_type_emb = self.vmap_get_sinusoidal_positional_encoding(jraph_graph.globals["nth_of_type"], 16).astype(dtype) # self.nth_of_type_emb(jraph_graph.globals["nth_of_type"])
-
-		energy_per_node_emb = self.vmap_get_sinusoidal_positional_encoding((energy_per_node.squeeze()).astype(jnp.int32), 8).astype(dtype)
-		
-		X_input = jnp.concatenate([T_embed, node_types_emb, nth_of_type_emb, jnp.zeros_like(energy_per_node_emb)], axis=-1) # we don't need rand_nodes! # energy_per_node_emb
-
-		if self.node_emb_type == "one_hot":
-			X_emb = jax.nn.one_hot(X_t[..., 0], num_classes=jraph_graph.meta["cabinets"])
-		elif self.node_emb_type == "neighbor":
-			idx = jnp.array(jraph_graph.globals["neighbours_per_node"])[jnp.arange(X_t.shape[0]), X_t[:, 0].astype(jnp.int32)]
-			X_emb = X_input[idx]
-		elif self.node_emb_type == "learned":
-			X_emb = jnp.zeros((X_t.shape[0], self.embedding_dim + 16), dtype=dtype)
-			slices = [slice(jraph_graph.meta["offset_rooms"], jraph_graph.meta["offset_rooms"] + jraph_graph.meta["rooms"]), 
-					  slice(jraph_graph.meta["offset_cabinets"], jraph_graph.meta["offset_cabinets"] + jraph_graph.meta["cabinets"]), 
-					  slice(jraph_graph.meta["offset_things_cabinets"], jraph_graph.meta["offset_things_cabinets"] + jraph_graph.meta["things"]), 
-					  slice(jraph_graph.meta["offset_things_persons"], jraph_graph.meta["offset_things_persons"] + jraph_graph.meta["things"]),
-					  slice(jraph_graph.meta["offset_persons"], jraph_graph.meta["offset_persons"] + jraph_graph.meta["persons"])]
-			for i in range(len(slices)):
-				X_emb = X_emb.at[slices[i]].set(jnp.concatenate([self.connection_emb[i](X_t[slices[i], 0].astype(jnp.int32)), self.vmap_get_sinusoidal_positional_encoding(X_t[slices[i], 0], 16)], axis=-1))
-		else:
-			X_emb = self.vmap_get_sinusoidal_positional_encoding(X_t[..., 0], self.embedding_dim)
-
-		X_emb = X_emb.astype(dtype)
-		X_input = jnp.concatenate([X_input, X_emb, ], axis=-1).astype(dtype) # energy_per_node_emb
-
-		
-		return X_input, node_types_emb, nth_of_type_emb, key
-
 	@partial(flax.linen.jit, static_argnums=0, static_argnames=("deterministic",))
 	def make_one_step(self,params ,graph_batch, X_prev, energy_per_node, t_idx_per_node, key, deterministic: bool = True, step: int = 0):
-		rand_nodes, key = self.reinit_rand_nodes(X_prev, key)
-
 		rngs = None
 		if not deterministic:
 			key, dropout_key = jax.random.split(key)
 			rngs = {"dropout": dropout_key}
 		
-		node_graph_idx, n_graph, n_node = self.get_graph_info(graph_batch)
+		node_graph_idx, n_graph, n_node = graph_batch.get_graph_info()
 
 		out_dict, key = self.apply(params, graph_batch, X_prev, energy_per_node, t_idx_per_node, key, deterministic=deterministic, rngs=rngs)
 		X_next, spin_log_probs, key = self.sample_from_model(out_dict["spin_logits"], graph_batch, key)
 
 		graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(spin_log_probs[...,0], node_graph_idx, n_graph)/(n_node))[:-1]))
-		out_dict["X_next"] = X_next
+		out_dict["X_next"] = X_next[..., 0]
 		out_dict["spin_log_probs"] = spin_log_probs
 		out_dict["state_log_probs"] = self.__get_log_prob(spin_log_probs[...,0], node_graph_idx, n_graph)
 		out_dict["graph_log_prob"] = graph_log_prob
@@ -295,52 +178,11 @@ class DiffModel(nn.Module):
 	
 	
 	@partial(flax.linen.jit, static_argnums=0)
-	def unbiased_last_step(self,params ,graph_batch, X_prev, t_idx, key, eps = 0.01):
-		rand_nodes, key = self.reinit_rand_nodes(X_prev, key)
-		out_dict, key = self.apply(params, graph_batch, rand_nodes, X_prev, t_idx, key)
-
-		spin_logits = out_dict["spin_logits"]
-		j_graphs = graph_batch
-		key, subkey = jax.random.split(key)
-
-		sampled_p = jax.random.uniform(key, shape =  (j_graphs.n_node.shape[0],))
-
-		nodes = j_graphs.nodes
-		n_node = j_graphs.n_node
-		total_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
-		graph_sampled_p = jnp.repeat(sampled_p, n_node, axis=0, total_repeat_length=total_nodes)
-		graph_sampled_p = graph_sampled_p[:, None]
-
-		X_next_model, spin_log_probs_model, key = self.sample_from_model(spin_logits, graph_batch, key)
-		X_next_uniform, one_hot_state, log_p_uniform_density, key = self.sample_prior(j_graphs, spin_logits.shape[1],  key)
-		X_next_uniform = X_next_uniform[...,0]
-		log_p_uniform = jnp.sum(log_p_uniform_density * one_hot_state, axis=-1)[...,0]
-
-		X_next = jnp.where(graph_sampled_p < eps, X_next_uniform, X_next_model)
-
-		concat_spin_log_probs = jnp.concatenate([spin_log_probs_model[None,...], log_p_uniform[None, ...]], axis = 0)
-		weights =  jnp.concatenate([(1-eps)*jnp.ones_like(spin_log_probs_model)[None,...], eps*jnp.ones_like(spin_log_probs_model)[None, ...]], axis = 0)
-		spin_log_probs = jax.scipy.special.logsumexp(concat_spin_log_probs, axis = 0, b = weights)
-
-		node_graph_idx, n_graph, n_node = self.get_graph_info(graph_batch)
-
-		graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(jnp.sum(spin_log_probs, axis = -1), node_graph_idx, n_graph)/(n_node))[:-1]))
-		return X_next, spin_log_probs, spin_logits, graph_log_prob, key
-
-	@partial(flax.linen.jit, static_argnums=0)
 	def sample_from_model(self, spin_logits, graph_batch, key):
 		key, subkey = jax.random.split(key)
-		X_next = jax.random.categorical(key=subkey,
-											   logits=spin_logits,
-											   axis=-1,
-											   shape=spin_logits.shape[:-1])
-
-
-		one_hot_state = jax.nn.one_hot(X_next, num_classes=graph_batch.meta["cabinets"])
+		X_next, one_hot_state = graph_batch.sample_from_logits(spin_logits, key=subkey)
 
 		spin_log_probs = jnp.sum(spin_logits * one_hot_state, axis=-1)
-
-
 		return X_next, spin_log_probs, key
 
 	
@@ -349,16 +191,13 @@ class DiffModel(nn.Module):
 		out_dict, key = self.apply(params, graph_batch, X_prev, energy_per_node, t_idx_per_node, key)
 
 		spin_logits = out_dict["spin_logits"]
-		node_graph_idx, n_graph, n_node = self.get_graph_info(graph_batch)
+		node_graph_idx, n_graph, _ = graph_batch.get_graph_info()
 
 		one_hot_state = jax.nn.one_hot(X_next, num_classes=self.n_bernoulli_features)
-		#X_next = jnp.expand_dims(X_next, axis = -1)
 		spin_log_probs = jnp.sum(spin_logits * one_hot_state, axis=-1)
-		#print(X_next.shape, X_next, jnp.exp(spin_log_probs))
 		X_next_log_prob = self.__get_log_prob(spin_log_probs[...,0], node_graph_idx, n_graph)
 
-		# graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(spin_log_probs[...,0], node_graph_idx, n_graph)/(n_node[:,None]*self.n_bernoulli_features))[:-1]))
-		# print("average prob T:0", jnp.mean(graph_log_prob))
+
 		out_dict["state_log_probs"] = X_next_log_prob
 		out_dict["spin_log_probs"] = spin_log_probs
 		return out_dict, key
@@ -375,7 +214,7 @@ class DiffModel(nn.Module):
 		shape = X_T.shape
 		log_p_uniform = self._get_prior(shape, j_graph, soft=True)
 
-		one_hot_state = jax.nn.one_hot(X_T[..., 0], num_classes=j_graph.meta["cabinets"])
+		one_hot_state = jax.nn.one_hot(X_T[..., 0], num_classes=self.n_bernoulli_features)
 		log_p_X_T_per_node = jnp.sum(log_p_uniform * one_hot_state, axis=-1)
 
 
@@ -388,8 +227,6 @@ class DiffModel(nn.Module):
 
 		log_p_X_T = self.__get_log_prob(log_p_X_T_per_node, node_graph_idx, n_graph)
 
-		# graph_log_prob = jax.lax.stop_gradient(jnp.exp((self.__get_log_prob(log_p_X_T_per_node, node_graph_idx, n_graph)/(n_node[:,None]*self.n_bernoulli_features))[:-1]))
-		# print("average prob 0", jnp.mean(graph_log_prob))
 		return log_p_X_T
 
 	def sample_prior(self, j_graph, N_basis_states, key):
@@ -398,12 +235,7 @@ class DiffModel(nn.Module):
 		key, subkey = jax.random.split(key)
 		log_p_uniform = self._get_prior(shape, j_graph)
 
-		X_prev = jax.random.categorical(key=subkey,
-										logits=log_p_uniform,
-										axis=-1,
-										shape=log_p_uniform.shape[:-1])[..., None]
-
-		one_hot_state = jax.nn.one_hot(X_prev[..., 0], num_classes=j_graph.meta["cabinets"])
+		X_prev, one_hot_state = j_graph.sample_from_logits(log_p_uniform, key=subkey)
 		return X_prev, one_hot_state, log_p_uniform, key
 
 	def sample_prior_w_probs(self, j_graph, N_basis_states, key):
@@ -411,41 +243,13 @@ class DiffModel(nn.Module):
 		log_p_X_T = self.calc_log_q_T(j_graph, X_T)
 		return X_T, log_p_X_T, one_hot_state, log_p_uniform, key
 
-	@partial(flax.linen.jit, static_argnums=(0,))
-	def get_mask(self, meta_graph):
-		mask = (jnp.arange(meta_graph.meta["cabinets"])[None, :] < meta_graph.graph.globals["classes_per_node"][:, None])
-		return mask * 1.0
 
 	@partial(flax.linen.jit, static_argnums=(0,1))
 	def _get_prior(self, shape, meta_graph, soft=False):
-		base_logits = prior_logits_for_graph(meta_graph, soft=soft)
-		target_shape = shape[:-1] + (base_logits.shape[-1],)
-		return jnp.broadcast_to(base_logits[:, None, :], target_shape)
-
-	#@partial(flax.linen.jit, static_argnums=(0,-1))
+		return meta_graph.get_prior_logits(shape, soft=soft)
+	
 	def __get_log_prob(self, spin_log_probs, node_graph_idx, n_graph):
-		log_probs = global_graph_aggr(spin_log_probs, node_graph_idx, n_graph)
-		return log_probs
+			log_probs = global_graph_aggr(spin_log_probs, node_graph_idx, n_graph)
+			return log_probs
 
 	
-
-
-def get_sinusoidal_positional_encoding(timestep, embedding_dim, max_position=10000.0):
-	"""
-    Create a sinusoidal positional encoding as described in the
-    "Attention is All You Need" paper.
-
-    Args:
-        timestep (int): The current time step.
-        embedding_dim (int): The dimensionality of the encoding.
-
-    Returns:
-        A 1D tensor of shape (embedding_dim,) representing the
-        positional encoding for the given timestep.
-    """
-	dtype = jnp.float32
-	position = jnp.asarray(timestep, dtype=dtype)
-	max_position_safe = jnp.maximum(jnp.asarray(max_position, dtype=dtype), dtype(1.0))
-	div_term = jnp.exp(jnp.arange(0, embedding_dim, 2, dtype=dtype) * (-jnp.log(max_position_safe) / embedding_dim))
-	angles = position[..., None] * div_term
-	return jnp.concatenate([jnp.sin(angles), jnp.cos(angles)], axis=-1)

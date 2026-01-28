@@ -1,31 +1,29 @@
+import os
 import os.path
-import copy
-import numpy as np
-from functools import partial
-import jax
-from jax import lax
-import jax.numpy as jnp
 import pickle
-import optax
+import tempfile
+import time
+import uuid
+from functools import partial
+
+import jax
+import jax.numpy as jnp
 import jraph
-from tqdm import tqdm
-import wandb
+import numpy as np
+import optax
 from matplotlib import pyplot as plt
+from tqdm import tqdm
+
+import jraph_utils
+import wandb
+from Data.LoadGraphDataset import SolutionDatasetLoader
 from DatasetCreator.loadGraphDatasets.HCPDatasetGenerator import plot
+from EnergyFunctions import get_Energy_class
+from Networks.DiffModel import DiffModel
 from NoiseDistributions import get_Noise_class
 from Trainers import get_Trainer_class
-from Networks.DiffModel import DiffModel
 from utils.lr_schedule import cos_schedule
-from EnergyFunctions import get_Energy_class
-from Data.LoadGraphDataset import SolutionDatasetLoader
-from jax.tree_util import tree_flatten
-import time
-import jraph_utils
-from utils import reshape_utils
-import os
-import tempfile
-import warnings
-import uuid
+from utils.utils import unravel_dict
 
 
 class TrainMeanField:
@@ -113,11 +111,11 @@ class TrainMeanField:
 				self.n_bernoulli_features = 20
 			elif("100" in self.dataset_name):
 				self.n_bernoulli_features = 100
-		elif self.problem_name == "HCP":
+		elif self.problem_name in ["HCP", "Countdown"]:
 			self.n_bernoulli_features = config["n_bernoulli_features"] # todo plassma: hardcoded for now
 		else:
 			self.n_bernoulli_features = 2
-
+		# todo plassma: fix all config param overwriting
 		self.config["n_bernoulli_features"] = self.n_bernoulli_features
 
 		if(self.problem_name == "TSP"):
@@ -473,8 +471,7 @@ class TrainMeanField:
 
 		if (self.load_wandb_id != None):
 			self.params = jax.tree_util.tree_map(lambda x: x[0], self.params)
-		elif(self.graph_mode != "U_net"):
-
+		else:
 			graph_batch = self._prepare_graphs(jraph_graph_dict)
 
 			batched_graph = graph_batch
@@ -484,28 +481,10 @@ class TrainMeanField:
 			graph_device = jax.tree_util.tree_map(lambda x: x[0], graph_batch)
 			t_idx_per_node = jnp.ones((batched_graph.nodes.shape[1],1))
 			self.params = self.model.init({"params": subkey}, graph_device, X_prev, energy_per_node_dim, t_idx_per_node, subkey)
-		elif(self.graph_mode == "U_net"):
-			reps = 10
-			iters = len(self.dataloader_train)*reps
-			U_net_graph_dict = jraph_graph_dict["U_net_graph_dict"][0]
-			U_net_graph_dict = jax.tree_util.tree_map(lambda x: jnp.array(x), U_net_graph_dict)
-			print(jax.tree_util.tree_map(lambda x: x.shape, U_net_graph_dict))
-
-			_ = self._prepare_graphs(jraph_graph_dict)
-
-			X_prev = jnp.ones((U_net_graph_dict["graphs"][0].nodes.shape[0], 1))
-			rand_node_features = jnp.ones((U_net_graph_dict["graphs"][0].nodes.shape[0], self.energy_per_node_dim))
-			self.params = self.model.init({"params": subkey}, U_net_graph_dict, X_prev,rand_node_features, 0, subkey)
-
-		else:
-			raise ValueError("")
-
 
 		num_gpus = jax.local_device_count()
 		print("Training is distributed across ", num_gpus, "devices!")
-		# if(num_gpus <= 1):
-		# 	pass
-		# else:
+
 		self.params = jax.device_put_replicated(self.params, list(jax.devices()))
 
 		print("pmapped params")
@@ -668,7 +647,7 @@ class TrainMeanField:
 				step3 = time.time()
 
 				if("metrics" in log_dict.keys()):
-					log_dict_metrics = jax.tree_util.tree_map(reshape_utils.unravel_dict, log_dict["metrics"])
+					log_dict_metrics = jax.tree_util.tree_map(unravel_dict, log_dict["metrics"])
 					batch_log_dict = self.__calculate_reporting(graph_batch.graph,
 						log_dict_metrics["energies"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"])
 					batch_log_dict["solution_prob_mean"] = log_dict_metrics["solution_prob_mean"]
@@ -822,7 +801,7 @@ class TrainMeanField:
 					wandb.log({"random sample": wandb.Image(target.name)}, commit=False, step=epoch)
 
 
-			log_dict_metrics = jax.tree_util.tree_map(reshape_utils.unravel_dict, log_dict["metrics"])
+			log_dict_metrics = jax.tree_util.tree_map(unravel_dict, log_dict["metrics"])
 			if("Losses" in log_dict.keys()):
 				loss_dict = {f"losses/{key}": log_dict["Losses"][key] for key in log_dict["Losses"]}
 				for key in loss_dict.keys():
@@ -936,7 +915,7 @@ class TrainMeanField:
 			time_dict["CE"].append(log_dict["time"]["CE"])
 
 
-			log_dict_metrics = jax.tree_util.tree_map(reshape_utils.unravel_dict, log_dict["metrics"])
+			log_dict_metrics = jax.tree_util.tree_map(unravel_dict, log_dict["metrics"])
 			if("Losses" in log_dict.keys()):
 				loss_dict = {f"losses/{key}": log_dict["Losses"][key] for key in log_dict["Losses"]}
 				for key in loss_dict.keys():

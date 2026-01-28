@@ -52,7 +52,7 @@ class GRPO(PPO):
         key, subkey = jax.random.split(key)
         batched_key = jax.random.split(subkey, num=Sb_Hb_Nb_A_k.shape[0])
 
-        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(graph_batch)
+        node_gr_idx, n_graph, n_node = graph_batch.get_graph_info()
         energy_per_node = self.vmapped_relaxed_energy(
             graph_batch,
             Sb_Hb_Nb_X_prev.swapaxes(0, 1).astype(jnp.int32),

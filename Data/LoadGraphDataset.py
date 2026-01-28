@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from GraphWithMeta import GraphWithMeta
+from Problems.GraphWithMeta import GraphWithMeta
 
 
 class SolutionDatasetLoader:
@@ -206,7 +206,7 @@ class SolutionDataset_InMemory(Dataset):
     def get_dataset_paths(self, cfg, mode="", seed=None):
         select_data_name =  self.problem_name
 
-        base_path = os.path.dirname(os.getcwd()) + "/DIffUCO/DatasetCreator/loadGraphDatasets/DatasetSolutions/"
+        base_path = os.path.dirname(os.getcwd()) + "/NPO/DatasetCreator/loadGraphDatasets/DatasetSolutions/"
 
         load_path = base_path + f"no_norm/{self.dataset_name}/{self.mode}/{self.seed}/{select_data_name}/indexed/"
         with open(load_path+ f"idx_{0}_solutions.pickle", "rb") as file:
@@ -235,8 +235,6 @@ class SolutionDataset_InMemory(Dataset):
             graph_dict = pickle.load(file)
 
         input_graph = graph_dict["H_graphs"]
-
-        input_graph = GraphWithMeta(graph=input_graph.graph._replace(edges = input_graph.graph.edges.astype(np.float32)), meta=input_graph.meta)
 
         return_dict = {"input_graph": input_graph, "energies": graph_dict["Energies"],
                        "bs_bins": graph_dict["gs_bins"]}

@@ -6,8 +6,8 @@ import jax.tree_util as tree
 import jraph
 import numpy as np
 
-from DatasetCreator.jraph_utils.utils import from_igraph_to_jgraph
-from GraphWithMeta import GraphWithMeta
+from Problems.GraphWithMeta import GraphWithMeta
+
 
 def global_graph_aggr(feature, node_graph_idx, n_graph):
     aggr_feature = jax.ops.segment_sum(feature, node_graph_idx, n_graph)
@@ -193,21 +193,18 @@ def device_batch(graph_generator, np_ = np):
             batch.append(graph)
 
 
-def pmap_graph_list_better(maybe_meta_graph_list, dataset_statistics_dict=None, pad_func=pad_with_graphs, return_size=False):
-    """Device-batch graphs and add a single padding node per device batch."""
-    is_meta = False
+def pmap_graph_list_better(meta_graph_list, dataset_statistics_dict=None, pad_func=pad_with_graphs, return_size=False):
+    """Device-batch GraphWithMeta objects and add a single padding node per device batch."""
     n_devices = jax.local_device_count()
-    maybe_meta_graph_list = _ensure_list(maybe_meta_graph_list)
-    if isinstance(maybe_meta_graph_list[0], GraphWithMeta):
-        is_meta = True
+    meta_graph_list = _ensure_list(meta_graph_list)
+    if not isinstance(meta_graph_list[0], GraphWithMeta):
+        raise TypeError("pmap_graph_list_better expects GraphWithMeta instances.")
+    graph_cls = type(meta_graph_list[0])
 
-    maybe_meta_graph_list, n_graphs_per_device = _repeat_graphs_for_devices(maybe_meta_graph_list, n_devices)
+    meta_graph_list, n_graphs_per_device = _repeat_graphs_for_devices(meta_graph_list, n_devices)
 
-    if is_meta:
-        meta_list = [el.meta for el in maybe_meta_graph_list]
-        jraph_graph_list = [el.graph for el in maybe_meta_graph_list]
-    else:
-        jraph_graph_list = maybe_meta_graph_list
+    meta_list = [el.meta for el in meta_graph_list]
+    jraph_graph_list = [el.graph for el in meta_graph_list]
 
     device_batched_graphs = [
         jraph.batch_np(jraph_graph_list[idx * n_graphs_per_device : (idx + 1) * n_graphs_per_device])
@@ -226,9 +223,8 @@ def pmap_graph_list_better(maybe_meta_graph_list, dataset_statistics_dict=None, 
     device_batched_graphs = jax.tree_util.tree_map(
         lambda leaf: jnp.asarray(leaf) if hasattr(leaf, "shape") else leaf, device_batched_graphs
     )
-    if is_meta:
-        meta = _merge_meta(meta_list)
-        device_batched_graphs = GraphWithMeta(graph=device_batched_graphs, meta=meta)
+    meta = _merge_meta(meta_list)
+    device_batched_graphs = graph_cls(graph=device_batched_graphs, meta=meta)
     if return_size:
         return device_batched_graphs, max_nodes + 1, max_edges
     return device_batched_graphs

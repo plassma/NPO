@@ -7,8 +7,8 @@ from typing import Dict, Tuple
 import jax
 import jax.numpy as jnp
 
-from GraphWithMeta import GraphWithMeta
 from jraph_utils import pmap_graph_list_better
+from Problems.GraphWithMeta import GraphWithMeta
 
 ROOMS = 0
 CABINETS = 1

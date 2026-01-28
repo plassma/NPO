@@ -294,7 +294,7 @@ class PPO(Base):
                                                                                              key)
 
         n_graphs = graphs.n_node.shape[0]
-        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(graphs)
+        node_gr_idx, n_graph, n_node = graphs.get_graph_info()
 
         log_policies = jnp.zeros((overall_diffusion_steps, n_graphs, X_prev.shape[1]), dtype=jnp.float32)
         Xs_over_different_steps = jnp.zeros((overall_diffusion_steps + 1, X_prev.shape[0], X_prev.shape[1], 1))

@@ -153,7 +153,7 @@ class Reinforce(Base):
         log_p_prev_per_node = log_p_prev_per_node.at[0].set(spin_log_probs_prev)
         Xs_over_different_steps = Xs_over_different_steps.at[0].set(X_prev)
 
-        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(graphs)
+        node_gr_idx, n_graph, n_node = graphs.get_graph_info()
         # key = jax.random.split(key, num=self.N_basis_states)
         # Energy_over_diff_steps = Energy_over_diff_steps.at[0].set(self.__get_energy_loss(graphs, spin_logits_prev, spin_logits_prev)[2])
 
@@ -345,7 +345,7 @@ class Reinforce(Base):
         log_p_prev_per_node = log_p_prev_per_node.at[0].set(spin_log_probs_prev)
         Xs_over_different_steps = Xs_over_different_steps.at[0].set(X_prev)
 
-        node_gr_idx, n_graph, total_num_nodes = self._compute_aggr_utils(graphs)
+        node_gr_idx, n_graph, n_node = graphs.get_graph_info()
 
         scan_dict = { "L_entropy": L_entropy,
                     "L_noise": L_noise,

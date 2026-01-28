@@ -1,12 +1,16 @@
-import sys
-sys.path.append("..")
-from abc import ABC, abstractmethod
 import os
+import sys
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if ROOT_DIR not in sys.path:
+	sys.path.insert(0, ROOT_DIR)
+
+from abc import ABC, abstractmethod
 import jraph
 import pickle
 import numpy as np
 from pathlib import Path
-from jraph_utils import from_igraph_to_jgraph
+from DatasetCreator.jraph_utils import from_igraph_to_jgraph
 from .save_utils import save_indexed_dict, load_indexed_dict
 import igraph as ig
 import networkx as nx
@@ -57,7 +61,7 @@ class BaseDatasetGenerator(ABC):
 		np.random.seed(self.seed + seed_int)
 
 	@abstractmethod
-	def generate_dataset(self):
+	def _generate_dataset(self) -> dict[str, list]:
 		"""
 		Generate the graph instances for the dataset
 
@@ -66,6 +70,20 @@ class BaseDatasetGenerator(ABC):
 		- use self.save_solutions(solutions) to save the solutions
 		"""
 		raise NotImplementedError("generate_graph method not implemented")
+	
+	
+	def generate_dataset(self) -> dict[str, list]:
+		solutions = self._generate_dataset()
+
+		for idx in range(len(solutions["Energies"])):
+			indexed_solution_dict = {}
+			for key in solutions.keys():
+				if len(solutions[key]) > 0:
+					indexed_solution_dict[key] = solutions[key][idx]
+			self.save_instance_solution(indexed_solution_dict, idx)
+		self.save_solutions(solutions)
+		return solutions
+	
 
 	def solve_graph(self, H_graph, g) -> (float, float, list, float, jraph.GraphsTuple):
 		"""

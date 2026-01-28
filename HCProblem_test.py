@@ -2,7 +2,7 @@ from itertools import permutations
 from DatasetCreator.loadGraphDatasets.HCPDatasetGenerator import HCProblem, plot
 import numpy as np
 import jax.numpy as jnp
-from GraphWithMeta import GraphWithMeta
+from Problems.GraphWithMeta import GraphWithMeta
 import jax.numpy as jnp
 from jax import random
 import jax

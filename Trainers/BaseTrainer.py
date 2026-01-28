@@ -158,16 +158,6 @@ class Base(ABC):
         return loss, (log_dict, _)
     
 
-    @partial(jax.jit, static_argnums=(0,))
-    def _compute_aggr_utils(self, jraph_graph):
-        nodes = jraph_graph.nodes
-        n_node = jraph_graph.n_node
-        n_graph = jax.tree_util.tree_leaves(n_node)[0].shape[0]
-        graph_idx = jnp.arange(n_graph)
-        total_num_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
-        node_graph_idx = jnp.repeat(graph_idx, n_node, axis=0, total_repeat_length=total_num_nodes)
-        return node_graph_idx, n_graph, total_num_nodes
-
     def _compute_solution_prob_stats(self, graphs, spin_logits_next, node_gr_idx):
         solution_nodes = graphs.graph.globals["solution_nodes"]
         num_cabinets = graphs.meta["cabinets"]

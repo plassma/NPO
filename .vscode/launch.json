@@ -22,6 +22,14 @@
             "args": ["--dataset", "HCP_dummy", "--problem", "HCP"],
         },
         {
+            "name": "Generate Countdown small",
+            "cwd": "/system/user/publicwork/mplasser/NPO/DatasetCreator",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "prepare_datasets.py",
+            "args": ["--dataset", "Countdown_small", "--problem", "Countdown"],
+        },
+        {
             "name": "DiffUCO MIS dbg",
             "type": "debugpy",
             "request": "launch",
@@ -36,7 +44,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "argparse_ray_main.py",
-            "args": ["--lrs", "0.002", "--GPUs", "1", "--IsingMode", "HCP_dummy", "--EnergyFunction", "HCP", "--N_anneal", "2000", "--batch_size", "20", "--n_basis_states", "20", "--noise_potential", "annealed_obj", "--project_name", "FirstRunsHCP", "--seed", "123", "--debug", "--no-jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "2", "--minib_basis_states", "10", "--train_mode", "PPO", "--use-sample", "0", "--temps", "0.0", "--T_target", "0.0", "--AnnealSchedule", "linear"],
+            "args": ["--lrs", "0.0001", "--GPUs", "2", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "1000", "--noise_potential", "annealed_obj", "--project_name", "FirstRunsHCP", "--seed", "123", "--debug", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "GRPO", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear", "--no-jit"],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "4"
             },
@@ -47,7 +55,29 @@
             "type": "debugpy",
             "request": "launch",
             "program": "argparse_ray_main.py",
-            "args": ["--lrs", "0.0001", "--GPUs", "2", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "1000", "--noise_potential", "annealed_obj", "--project_name", "FirstRunsHCP", "--seed", "123", "--debug", "--jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "Forward_KL", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
+            "args": ["--lrs", "0.0001", "--GPUs", "2", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "1000", "--noise_potential", "annealed_obj", "--project_name", "FirstRunsHCP", "--seed", "123", "--debug", "--jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "GRPO", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "4"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "DiffUCO Countdown",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "argparse_ray_main.py",
+            "args": ["--lrs", "0.0001", "--GPUs", "2", "--IsingMode", "Countdown_small", "--EnergyFunction", "Countdown", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "1000", "--noise_potential", "annealed_obj", "--project_name", "Countdown", "--seed", "123", "--debug", "--no-jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "GRPO", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "4"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "DiffUCO Countdown jit",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "argparse_ray_main.py",
+            "args": ["--lrs", "0.0001", "--GPUs", "2", "--IsingMode", "Countdown_small", "--EnergyFunction", "Countdown", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "1000", "--noise_potential", "annealed_obj", "--project_name", "Countdown", "--seed", "123", "--debug", "--jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "GRPO", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "4"
             },
