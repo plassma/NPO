@@ -1,16 +1,10 @@
+import time
 from abc import ABC, abstractmethod
 from functools import partial
+
 import jax
-import jraph
-import optax
 import jax.numpy as jnp
-import numpy as np
-import scipy as sp
-import flax
-import scipy.special
-import wandb
-from tqdm import tqdm
-import time
+
 
 class Base(ABC):
     def __init__(self, config, EnergyClass, NoiseClass, model):
@@ -156,20 +150,6 @@ class Base(ABC):
         log_dict["time"]["CE"] = 0. # can deleted?
 
         return loss, (log_dict, _)
-    
-
-    def _compute_solution_prob_stats(self, graphs, spin_logits_next, node_gr_idx):
-        solution_nodes = graphs.graph.globals["solution_nodes"]
-        num_cabinets = graphs.meta["cabinets"]
-        solution_spins_last_step = (
-            jax.nn.one_hot(solution_nodes, num_classes=num_cabinets)[:, None, None]
-            * jax.lax.stop_gradient(spin_logits_next)
-        ).sum(-1)
-        n_graphs = graphs.graph.n_node.shape[0]
-        solution_prob_last_step = jax.ops.segment_sum(solution_spins_last_step, node_gr_idx, n_graphs)[:-1]
-        solution_prob_min_factor = jax.ops.segment_min(solution_spins_last_step, node_gr_idx, n_graphs)[:-1]
-        return solution_prob_last_step.mean(), solution_prob_min_factor.mean()
-
 
 @partial(jax.jit, static_argnums=())
 def repeat_along_nodes(nodes, n_node, target_per_graph):

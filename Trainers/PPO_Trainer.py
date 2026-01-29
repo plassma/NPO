@@ -1,18 +1,19 @@
+import time
+from functools import partial
+
+import jax
 import jax.numpy as jnp
 import numpy as np
-from functools import partial
-import jax
-
-from HCProblem_test import aug_solution_jax, sample_permutations
-
-from .BaseTrainer import Base
-from .ppo_utils import select_time_indices
-import time
 import optax
-from utils import MovingAverages
 from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+
+from utils import MovingAverages
+
+from .BaseTrainer import Base
+from .ppo_utils import select_time_indices
+
 ### TODO use RL environments to make it possible to project solutions onto feasible solutions!
 
 class PPO(Base):
@@ -321,8 +322,8 @@ class PPO(Base):
         spin_log_probs = out_dict_list["spin_log_probs"][-1]
         spin_logits_next = out_dict_list["spin_logits_next"][-1]
 
-        solution_prob_mean, solution_prob_min = self._compute_solution_prob_stats(
-            graphs, spin_logits_next, node_gr_idx
+        solution_prob_mean, solution_prob_min = graphs.compute_solution_prob_stats(
+            spin_logits_next
         )
 
         X_next = scan_dict["X_prev"]#

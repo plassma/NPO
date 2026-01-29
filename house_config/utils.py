@@ -212,6 +212,4 @@ def pad_graph(graph_with_meta, dataset_statistics):
     padded = pmap_graph_list_better([graph_with_meta], dataset_statistics)
     graph = padded.graph if isinstance(padded, GraphWithMeta) else padded
     graph = jax.tree_util.tree_map(lambda leaf: jnp.asarray(leaf) if hasattr(leaf, "shape") else leaf, graph)
-    if isinstance(padded, GraphWithMeta):
-        return GraphWithMeta(graph=graph, meta=padded.meta)
-    return graph
+    return type(graph_with_meta)(graph, graph_with_meta.meta)

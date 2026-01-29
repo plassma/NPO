@@ -13,7 +13,7 @@ class CountdownGraph(GraphWithMeta):
 	def embed_nodes(self, diff_model, X_t, energy_per_node, t_idx_per_node):
 		dtype = jnp.bfloat16 if diff_model.bfloat16 else jnp.float32
 		
-		prefix_int = jnp.concatenate([self.globals["target"], self.globals["numbers"]]) # todo: probably needs pos embedding, could add separator token here, do not use num-encoder for it
+		prefix_int = jnp.concatenate([self.globals["target"][:-1], self.globals["numbers"][:-1]]) # todo: probably needs pos embedding, could add separator token here, do not use num-encoder for it
 		prefix_int_feats = jnp.array([prefix_int, prefix_int ** 2, jnp.log(prefix_int + 1), jnp.sqrt(prefix_int + 1)]).T # todo: add modulo feats here?
 		prefix_int_emb = diff_model.number_encoder(prefix_int_feats.astype(dtype))
 		symbols = diff_model.symbol_encoder(jnp.concat([jnp.array([SEP_TOKEN]), X_t[..., 0]]))
@@ -35,8 +35,10 @@ class CountdownGraph(GraphWithMeta):
 	
 	
 	def masked_logits_from_scores(self, scores):
-		without_prefix = scores[self.meta["num_operands"] + 1 :]  # remove prefix tokens
-		return jax.nn.log_softmax(scores, axis=-1)
+		without_prefix = scores[self.meta["num_operands"] + 2 :]  # remove prefix tokens
+		if len(scores.shape) == 2:
+			without_prefix = without_prefix[:, None, :]
+		return jax.nn.log_softmax(without_prefix, axis=-1)
 	
 	def sample_from_logits(self, logits, key):
 		# logits: [L, N, V]; scan_sample_from_logits expects [L, V]
@@ -51,7 +53,7 @@ class CountdownGraph(GraphWithMeta):
 			toks, _, _ = scan_sample_from_logits(
 				k,
 				logits_LV,
-				self.globals["numbers"],
+				self.globals["numbers"][:-1],
 				self.meta["num_operands"],
 				self.meta["num_operands"],
 			)
@@ -67,6 +69,14 @@ class CountdownGraph(GraphWithMeta):
 			one_hot = one_hot[:, 0, :]
 
 		return X.astype(jnp.int32), one_hot # todo plassma: return actual logits!
+	
+	def compute_solution_prob_stats(self, spin_logits_next):
+		print("Warning: using mocked solution prob stats in CountdownGraph.")
+		return 0, 0
+	
+	def calc_mean_prob(self, spin_log_probs):
+		print("Warning: check calc_mean_prob_again in CountdownGraph!")
+		return spin_log_probs.mean()
 
 def make_token_ids(Nmax):
 	IDX0 = 0
@@ -78,6 +88,31 @@ def make_token_ids(Nmax):
 	PAD    = Nmax + 5
 	V = Nmax + 6
 	return IDX0, OP_ADD, OP_SUB, OP_MUL, OP_DIV, EOS, PAD, V
+
+def tokenize_rpn(Nmax, solution_rpn):
+	"""
+	Converts RPN tokens (string or list) into the corresponding token IDs used by the model.
+	Operands are in [0, Nmax-1], operators are in {Nmax, Nmax+1, Nmax+2, Nmax+3}, EOS is Nmax+4.
+	"""
+	IDX0, OP_ADD, OP_SUB, OP_MUL, OP_DIV, EOS, PAD, V = make_token_ids(Nmax)
+
+	token_ids = []
+	tokens = solution_rpn.split() if isinstance(solution_rpn, str) else solution_rpn
+	for token in tokens:
+		if token == '+':
+			token_ids.append(OP_ADD)
+		elif token == '-':
+			token_ids.append(OP_SUB)
+		elif token == '*':
+			token_ids.append(OP_MUL)
+		elif token == '/':
+			token_ids.append(OP_DIV)
+		else:
+			# Operand
+			operand_idx = int(token)
+			token_ids.append(operand_idx)
+	token_ids.append(EOS)
+	return jnp.array(token_ids, dtype=jnp.int32)
 
 def _masked_logits(logits, mask, neg_inf=-1e9):
 	# mask: bool[V] True=allowed

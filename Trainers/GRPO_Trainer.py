@@ -1,6 +1,7 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
-from functools import partial
 
 from .PPO_Trainer import PPO
 

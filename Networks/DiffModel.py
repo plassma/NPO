@@ -140,12 +140,16 @@ class DiffModel(nn.Module):
 		else:
 			raise ValueError(f"Unknown transformer_type: {self.transformer_type}")
 
-		queries = self.W_q(embeddings)
-		keys = self.W_k(embeddings)[graph_batch.globals["neighbours_per_node"]]
+		if self.problem_type == "Countdown":
+			# Countdown specific head
+			scores = self.category_head(embeddings)
+		else:
+			queries = self.W_q(embeddings)
+			keys = self.W_k(embeddings)[graph_batch.globals["neighbours_per_node"]]
 
-		scores = jnp.einsum('nd,ncd->nc', queries, keys) / jnp.sqrt(queries.shape[-1]) #score_embeddings
+			scores = jnp.einsum('nd,ncd->nc', queries, keys) / jnp.sqrt(queries.shape[-1]) #score_embeddings
 
-		#scores = self.category_head(embeddings)
+			#scores = self.category_head(embeddings)
 		
 		spin_logits = graph_batch.masked_logits_from_scores(scores)
 		
@@ -180,7 +184,7 @@ class DiffModel(nn.Module):
 	@partial(flax.linen.jit, static_argnums=0)
 	def sample_from_model(self, spin_logits, graph_batch, key):
 		key, subkey = jax.random.split(key)
-		X_next, one_hot_state = graph_batch.sample_from_logits(spin_logits, key=subkey)
+		X_next, one_hot_state = graph_batch.sample_from_logits(spin_logits, key=subkey) # logits: 121, 1, 10, x_next: 121, 1, 1
 
 		spin_log_probs = jnp.sum(spin_logits * one_hot_state, axis=-1)
 		return X_next, spin_log_probs, key

@@ -1,5 +1,6 @@
 
 import jax
+import jraph
 from flax import struct
 from jax import numpy as jnp
 
@@ -109,3 +110,29 @@ class HCPGraph(GraphWithMeta):
 		Values = diff_model.value_mlp(value_emb)[..., 0, 0]
 
 		return Values
+	
+	def compute_solution_prob_stats(self, spin_logits_next):
+		node_gr_idx, n_graph, n_node = self.get_graph_info()
+		solution_nodes = self.graph.globals["solution_nodes"]
+		num_cabinets = self.meta["cabinets"]
+		solution_spins_last_step = (
+			jax.nn.one_hot(solution_nodes, num_classes=num_cabinets)[:, None, None]
+			* jax.lax.stop_gradient(spin_logits_next)
+		).sum(-1)
+		n_graphs = self.graph.n_node.shape[0]
+		solution_prob_last_step = jax.ops.segment_sum(solution_spins_last_step, node_gr_idx, n_graphs)[:-1]
+		solution_prob_min_factor = jax.ops.segment_min(solution_spins_last_step, node_gr_idx, n_graphs)[:-1]
+		return solution_prob_last_step.mean(), solution_prob_min_factor.mean()
+	
+	def calc_mean_prob(self, spin_log_probs):
+		### TODO implement this for more than oe device
+		graphs = jax.tree_util.tree_map(lambda x: jnp.concatenate(x, axis = 0), self)
+		nodes = graphs.nodes
+		n_node = graphs.n_node
+		n_graph = jax.tree_util.tree_leaves(n_node)[0].shape[0]
+		graph_idx = jnp.arange(n_graph)
+		total_num_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
+		node_graph_idx = jnp.repeat(graph_idx, n_node, axis=0, total_repeat_length=total_num_nodes)
+		mask_not_person = jnp.where(graphs.globals["node_types"] < 3, 1, 0)[..., None, None]
+		mean_prob_per_graph = jraph.segment_sum(jnp.exp(spin_log_probs) * mask_not_person, node_graph_idx, n_graph) / jraph.segment_sum(mask_not_person, node_graph_idx, n_graph)
+		return mean_prob_per_graph[:-1]

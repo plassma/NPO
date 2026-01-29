@@ -66,7 +66,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "argparse_ray_main.py",
-            "args": ["--lrs", "0.0001", "--GPUs", "2", "--IsingMode", "Countdown_small", "--EnergyFunction", "Countdown", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "1000", "--noise_potential", "annealed_obj", "--project_name", "Countdown", "--seed", "123", "--debug", "--no-jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "GRPO", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
+            "args": ["--lrs", "0.0001", "--GPUs", "2", "--IsingMode", "Countdown_small", "--EnergyFunction", "Countdown", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "20", "--noise_potential", "annealed_obj", "--project_name", "Countdown", "--seed", "123", "--debug", "--no-jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "GRPO", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "4"
             },
@@ -77,7 +77,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "argparse_ray_main.py",
-            "args": ["--lrs", "0.0001", "--GPUs", "2", "--IsingMode", "Countdown_small", "--EnergyFunction", "Countdown", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "1000", "--noise_potential", "annealed_obj", "--project_name", "Countdown", "--seed", "123", "--debug", "--jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "GRPO", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
+            "args": ["--lrs", "0.0001", "--GPUs", "2", "--IsingMode", "Countdown_small", "--EnergyFunction", "Countdown", "--N_anneal", "300", "--batch_size", "20", "--n_basis_states", "20", "--noise_potential", "annealed_obj", "--project_name", "Countdown", "--seed", "123", "--debug", "--jit", "--n_diffusion_steps", "4", "--minib_diff_steps", "4", "--minib_basis_states", "25", "--train_mode", "GRPO", "--use-sample", "0", "--temps", "0.005", "--T_target", "0.005", "--AnnealSchedule", "linear"],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "4"
             },

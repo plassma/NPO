@@ -3,7 +3,7 @@ import random
 import numpy as np
 from jraph import GraphsTuple
 
-from Problems.CountdownGraph import CountdownGraph
+from Problems.CountdownGraph import CountdownGraph, tokenize_rpn
 
 from .BaseDatasetGenerator import BaseDatasetGenerator
 
@@ -17,13 +17,19 @@ def generate_solvable_instance(num_operands=5):
     # 1. Start with random leaf nodes (numbers)
     nums = [random.randint(1, 10) for _ in range(num_operands)]
     current_values = list(nums)
+    # Track RPN tokens using absolute operand indices (0..num_operands-1).
+    current_rpn = [[str(i)] for i in range(num_operands)]
     
     # 2. Simulate operations to find a valid target
     history = []
     while len(current_values) > 1:
         # Pick two random numbers
-        a = current_values.pop(random.randint(0, len(current_values)-1))
-        b = current_values.pop(random.randint(0, len(current_values)-1))
+        a_idx = random.randint(0, len(current_values)-1)
+        a = current_values.pop(a_idx)
+        a_rpn = current_rpn.pop(a_idx)
+        b_idx = random.randint(0, len(current_values)-1)
+        b = current_values.pop(b_idx)
+        b_rpn = current_rpn.pop(b_idx)
         op = random.choice(ops)
         
         # Avoid division by zero or messy fractions for integer-only tasks
@@ -41,10 +47,13 @@ def generate_solvable_instance(num_operands=5):
             val = a + b
             
         current_values.append(val)
+        rpn_expr = a_rpn + b_rpn + [op]
+        current_rpn.append(rpn_expr)
         history.append(f"({a} {op} {b} = {val})")
 
     target = current_values[0]
-    return {"inputs": nums, "target": target, "solution_trace": history}
+    solution_rpn = " ".join(current_rpn[0])
+    return {"inputs": nums, "target": target, "solution_trace": history, "solution_trace_rpn": solution_rpn}
 
 def generate_solvable_instance_bounded_target(num_operands=5, target_min=-100, target_max=100):
     """
@@ -88,10 +97,11 @@ class CountdownDatasetGenerator(BaseDatasetGenerator):
             globals = {
                 "numbers": np.array(nums),
                 "target": np.array([target]),
+                "solution_nodes": tokenize_rpn(num_operands, instance["solution_trace_rpn"]),
             }
             dummy_node_edge = np.array([0])
 
-            n_nodes = num_operands * 2 - 1
+            n_nodes = num_operands * 2
 
             graph = GraphsTuple(np.zeros((n_nodes)), dummy_node_edge, dummy_node_edge, dummy_node_edge, globals, np.array([n_nodes]), np.array([1]), )
 

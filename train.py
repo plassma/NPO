@@ -8,7 +8,6 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
-import jraph
 import numpy as np
 import optax
 from matplotlib import pyplot as plt
@@ -648,7 +647,7 @@ class TrainMeanField:
 
 				if("metrics" in log_dict.keys()):
 					log_dict_metrics = jax.tree_util.tree_map(unravel_dict, log_dict["metrics"])
-					batch_log_dict = self.__calculate_reporting(graph_batch.graph,
+					batch_log_dict = self.__calculate_reporting(graph_batch,
 						log_dict_metrics["energies"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"])
 					batch_log_dict["solution_prob_mean"] = log_dict_metrics["solution_prob_mean"]
 					batch_log_dict["solution_prob_min"] = log_dict_metrics["solution_prob_min"]
@@ -795,7 +794,7 @@ class TrainMeanField:
 				self.params, graph_batch, self.T, batched_key, mode = mode, epoch = epoch, epochs = self.epochs
 			)
 
-			if self.use_wandb:
+			if self.use_wandb and self.problem_name == "HCP":
 				with tempfile.NamedTemporaryFile(suffix=".png") as target:
 					plot(None, graph_batch.graph.globals["node_types"][0, :-1],target.name, solution_nodes=log_dict["X_0"][0, :-1, 0, 0], meta_graph=graph_batch)
 					wandb.log({"random sample": wandb.Image(target.name)}, commit=False, step=epoch)
@@ -812,7 +811,7 @@ class TrainMeanField:
 
 			energy_dict = {f"energies/{key}": log_dict["energies"][key] for key in log_dict["energies"]}
 
-			batch_log_dict = self.__calculate_reporting(graph_batch.graph,
+			batch_log_dict = self.__calculate_reporting(graph_batch,
 				log_dict_metrics["energies"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"])
 			batch_log_dict["solution_prob_mean"] = log_dict_metrics["solution_prob_mean"]
 			batch_log_dict["solution_prob_min"] = log_dict_metrics["solution_prob_min"]
@@ -927,10 +926,10 @@ class TrainMeanField:
 			### TODO fix this logging so that batchsize does not have an effect anymore
 			energy_dict = {f"energies/{key}": log_dict["energies"][key] for key in log_dict["energies"]}
 
-			batch_log_dict = self.__calculate_reporting(graph_batch.graph,
+			batch_log_dict = self.__calculate_reporting(graph_batch,
 				log_dict_metrics["energies"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"])
 
-			batch_CE_log_dict = self.__calculate_reporting(graph_batch.graph,
+			batch_CE_log_dict = self.__calculate_reporting(graph_batch,
 				log_dict_metrics["energies_CE"], gt_normed_energies, log_dict_metrics["spin_log_probs"], log_dict_metrics["free_energies"], prefix= "CE")
 
 			energy_mat_list.append(log_dict_metrics["energies_CE"])
@@ -1046,18 +1045,8 @@ class TrainMeanField:
 				wandb.log(plt_dict)
 
 	@partial(jax.jit, static_argnums=(0,))
-	def calc_mean_prob(self,graphs, spin_log_probs):
-		### TODO implement this for more than oe device
-		graphs = jax.tree_util.tree_map(lambda x: jnp.concatenate(x, axis = 0), graphs)
-		nodes = graphs.nodes
-		n_node = graphs.n_node
-		n_graph = jax.tree_util.tree_leaves(n_node)[0].shape[0]
-		graph_idx = jnp.arange(n_graph)
-		total_num_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
-		node_graph_idx = jnp.repeat(graph_idx, n_node, axis=0, total_repeat_length=total_num_nodes)
-		mask_not_person = jnp.where(graphs.globals["node_types"] < 3, 1, 0)[..., None, None]
-		mean_prob_per_graph = jraph.segment_sum(jnp.exp(spin_log_probs) * mask_not_person, node_graph_idx, n_graph) / jraph.segment_sum(mask_not_person, node_graph_idx, n_graph)
-		return mean_prob_per_graph[:-1]
+	def calc_mean_prob(self, graphs, spin_log_probs):
+		return graphs.calc_mean_prob(spin_log_probs)
 
 	def __calculate_reporting(self, graphs, normed_energies, gt_normed_energies, spin_log_probs, normed_free_energies=np.nan, prefix = ""):
 		gt_normed_energies = np.array(gt_normed_energies)

@@ -1,7 +1,10 @@
-from .BaseNoise import BaseNoiseDistr
-import jax.numpy as jnp
-import jax
 from functools import partial
+
+import jax
+import jax.numpy as jnp
+
+from .BaseNoise import BaseNoiseDistr
+
 
 class AnnealedNoiseDistr(BaseNoiseDistr):
 
@@ -58,7 +61,7 @@ class AnnealedNoiseDistr(BaseNoiseDistr):
         )
         Noise_Energy_per_graph = jnp.squeeze(Noise_Energy_per_graph, axis = -1)
         noise_step_value = gamma_t*Noise_Energy_per_graph
-        noise_rewards_arr = noise_rewards_arr.at[reward_idx].set(noise_rewards_arr[reward_idx] - noise_step_value)
+        noise_rewards_arr = noise_rewards_arr.at[reward_idx].set(noise_rewards_arr[reward_idx] - noise_step_value) # arr shapes countdown: [4, 1, 20], [4, 1, 20], [2, 20]
         return noise_rewards_arr
 
 

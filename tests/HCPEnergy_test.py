@@ -1,38 +1,19 @@
-from EnergyFunctions import HCPEnergyClass
+import argparse
+import os
+
 import jax
 import jax.numpy as jnp
 import numpy as np
-from DatasetCreator.loadGraphDatasets.HCPDatasetGenerator import plot, plot_graph_flat
-from Data.LoadGraphDataset import SolutionDatasetLoader
-from house_config import compute_node_graph_indices, pad_graph, sample_prior_state
-import argparse
-import os
-import itertools
 
+from Data.LoadGraphDataset import SolutionDatasetLoader
+from DatasetCreator.loadGraphDatasets.HCPDatasetGenerator import plot, plot_graph_flat
+from EnergyFunctions import HCPEnergyClass
+from house_config import compute_node_graph_indices, pad_graph, sample_prior_state
 from house_config.utils import prior_logits_for_graph
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-if __name__ == "__main__":
-
-    np.set_printoptions(threshold=np.inf, linewidth=np.inf, suppress=True,)# precision=4
-
-    parser = argparse.ArgumentParser(
-        description="Run HCPEnergyClass.calculate_Energy_loss on a graph loaded from the dataset."
-    )
-    parser.add_argument("--dataset", default="HCP_dummy", help="Dataset name passed to SolutionDatasetLoader.")
-    parser.add_argument("--problem", default="HCP", help="Problem name passed to SolutionDatasetLoader.")
-    parser.add_argument("--mode", default="train", choices=("train", "val", "test"), help="Which dataset split to draw from.")
-    parser.add_argument("--seed", type=int, default=123, help="Dataset random seed.")
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size used for the DataLoader.")
-    parser.add_argument("--sample-idx", type=int, default=0, help="Index of the stored instance to load (mapped via config['use_sample']).")
-    parser.add_argument("--n-bernoulli-features", type=int, default=10, help="Value forwarded to HCPEnergyClass config.")
-    parser.add_argument("--n-diffusion-steps", type=int, default=0, help="Minimal config knob required by SolutionDatasetLoader.")
-    parser.add_argument("--n-basis-states", type=int, default=1, help="Minimal config knob required by SolutionDatasetLoader.")
-    parser.add_argument("--sample-seed", type=int, default=0, help="Seed used when sampling from the prior.")
-    args = parser.parse_args()
-
-    def _build_dataset_statistics(dataloader):
+def _build_dataset_statistics(dataloader):
         if dataloader is None:
             raise RuntimeError("Dataset statistics unavailable because the dataloader is None.")
 
@@ -58,6 +39,26 @@ if __name__ == "__main__":
             "min_edges": getattr(dataloader, "smallest_n_edges_input_graph"),
             "max_edges": getattr(dataloader, "largest_n_edges_input_graph"),
         }
+
+if __name__ == "__main__":
+
+    np.set_printoptions(threshold=np.inf, linewidth=np.inf, suppress=True,)# precision=4
+
+    parser = argparse.ArgumentParser(
+        description="Run HCPEnergyClass.calculate_Energy_loss on a graph loaded from the dataset."
+    )
+    parser.add_argument("--dataset", default="HCP_dummy", help="Dataset name passed to SolutionDatasetLoader.")
+    parser.add_argument("--problem", default="HCP", help="Problem name passed to SolutionDatasetLoader.")
+    parser.add_argument("--mode", default="train", choices=("train", "val", "test"), help="Which dataset split to draw from.")
+    parser.add_argument("--seed", type=int, default=123, help="Dataset random seed.")
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch size used for the DataLoader.")
+    parser.add_argument("--sample-idx", type=int, default=0, help="Index of the stored instance to load (mapped via config['use_sample']).")
+    parser.add_argument("--n-bernoulli-features", type=int, default=10, help="Value forwarded to HCPEnergyClass config.")
+    parser.add_argument("--n-diffusion-steps", type=int, default=0, help="Minimal config knob required by SolutionDatasetLoader.")
+    parser.add_argument("--n-basis-states", type=int, default=1, help="Minimal config knob required by SolutionDatasetLoader.")
+    parser.add_argument("--sample-seed", type=int, default=0, help="Seed used when sampling from the prior.")
+    args = parser.parse_args()
+
 
     jax.config.update("jax_disable_jit", True)
 

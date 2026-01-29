@@ -54,8 +54,11 @@ class GraphWithMeta:
 		raise NotImplementedError("GraphWithMeta does not implement masked_logits_from_scores; use a specific problem subclass.")
 	
 	def values_from_embeddings(self, node_embeddings, spin_logits, diff_model):
-		print("Warning: using mocked value function in GraphWithMeta.")
-		return None
+		print("Warning: using mocked 0-value function in GraphWithMeta.")
+		first_graph = self
+		n_node = first_graph.n_node
+		n_graph = jax.tree_util.tree_leaves(n_node)[0].shape[0]
+		return jnp.zeros(n_graph)
 	
 	def sample_from_logits(self, logits, key):
 		print("Warning: using default implementation of sample_from_logits in GraphWithMeta.")
@@ -65,4 +68,12 @@ class GraphWithMeta:
 										shape=logits.shape[:-1])[..., None]
 		one_hot = jax.nn.one_hot(X[..., 0], num_classes=self.meta["cabinets"])
 		return X.astype(jnp.int32), one_hot
+	
+	def compute_solution_prob_stats(self, spin_logits_next):
+		raise NotImplementedError("GraphWithMeta does not implement compute_solution_prob_stats; use a specific problem subclass.")
+
+	def calc_mean_prob(self, spin_log_probs):
+		raise NotImplementedError("GraphWithMeta does not implement calc_mean_prob; use a specific problem subclass.")
+	
+
 

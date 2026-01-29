@@ -1,13 +1,13 @@
-import jax.numpy as jnp
-from functools import partial
-import jax
-from .BaseTrainer import Base, repeat_along_nodes
-import numpy as np
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
-import optax
 import time
+from functools import partial
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import optax
 from scipy.special import softmax as np_softmax
+
+from .BaseTrainer import Base, repeat_along_nodes
 
 vmap_repeat_along_nodes = jax.vmap(repeat_along_nodes, in_axes=(0, 0, 0))
 @partial(jax.jit, static_argnums=())
@@ -326,8 +326,8 @@ class ForwardKL(Base):
         key = scan_dict["key"]
         spin_log_probs = out_dict_list["spin_log_probs"][-1]
         spin_logits_next = out_dict_list["spin_logits_next"][-1]
-        solution_prob_mean, solution_prob_min = self._compute_solution_prob_stats(
-            graphs, spin_logits_next, node_gr_idx
+        solution_prob_mean, solution_prob_min = graphs.compute_solution_prob_stats(
+            spin_logits_next
         )
 
         log_p_0_T = scan_dict["log_p_0_T"]
